@@ -11,6 +11,8 @@ no build step.
 - `index.html` — the dashboard (single file, no build step).
 - `youtube_comment_extractor.py` — command-line version that exports a whole
   channel's comments to CSV, for scheduled/automated runs.
+- `supabase/functions/` — the deployed edge functions, kept here for review and
+  history. They are deployed to the Supabase project, not from this repo.
 
 ## Features
 
@@ -90,8 +92,11 @@ Secrets*, add:
 
 - `YOUTUBE_API_KEY` — your YouTube Data API v3 key. Until this is set, the proxy
   returns a clear 503 and "use my own key" still works.
-- `ANTHROPIC_API_KEY` — your Anthropic API key, for comment analysis. Until this
-  is set, the Analyse button returns a clear 503 and everything else still works.
+- `ANTHROPIC_API_KEY` — your Anthropic API key, for comment analysis on Claude.
+  Until this is set, the Analyse button returns a clear 503 and everything else
+  still works.
+- `OPENROUTER_API_KEY` *(optional)* — unlocks the other ~330 models, free and
+  paid, in the model dropdown. Without it only the Anthropic option appears.
 
 **2. Approve who may use them.** The dashboard is on a public URL, so anyone can
 create an account. Their own data stays isolated by row-level security, but only
@@ -109,8 +114,8 @@ under *Authentication → Emails* before more than one or two people rely on it.
 
 ## Comment analysis
 
-Signed-in users can run a **Claude pass** over the extracted comments. Each comment
-is tagged with:
+Signed-in users can run a **model pass** over the extracted comments — Claude by
+default, or any of ~330 other models. Each comment is tagged with:
 
 - **Sentiment** — positive / neutral / negative, judged on the commenter's attitude
   rather than the topic (a polite question about crop disease is neutral, not negative).
@@ -126,10 +131,37 @@ and Excel exports.
 The prompt is written for **Hindi, English, and mixed Hinglish** comments, since
 that's what an Indian farming channel actually gets.
 
-**Cost.** Analysis runs on `claude-opus-4-8` at $5/$25 per million input/output
-tokens. The dashboard reports the actual spend after each run. Comments are sent in
-batches of 40; already-analysed comments are skipped, so re-running after a failure
-resumes rather than paying twice.
+### Choosing a model
+
+A dropdown lists models **best first**, in three groups:
+
+| Group | What's in it |
+|---|---|
+| **Recommended** | Claude Opus 4.8 direct, then a curated capability order across Anthropic, OpenAI, Google, xAI, DeepSeek, Qwen, Mistral, and Meta |
+| **Free** | Every zero-cost model OpenRouter currently offers |
+| **All other paid models** | The remaining ~300, sorted by price as a rough capability proxy |
+
+Two routes are supported:
+
+- **Anthropic direct** (default) — `claude-opus-4-8` through the Anthropic SDK.
+- **OpenRouter** — everything else, via one key.
+
+The catalogue is **fetched live** from OpenRouter on each session rather than
+hard-coded, so newly released models appear without redeploying. Ranking is a
+curated *family-level* heuristic, so a new point release inherits its family's
+position. Ordering is a judgement call, not a benchmark — treat it as a starting
+point.
+
+Models that advertise strict JSON schema support get a hard-enforced schema; the
+rest (77 of ~330 at time of writing) are held to a JSON instruction in the prompt
+and parsed leniently, tolerating code fences and surrounding prose. The dropdown
+labels which is which, and warns on free-tier rate limits.
+
+**Cost.** Each model's real per-token price comes from the live catalogue, and the
+dashboard reports actual spend after each run. Claude Opus 4.8 is $5/$25 per
+million input/output tokens; free models cost nothing but expect rate limits and
+lower accuracy. Comments are sent in batches of 40; already-analysed comments are
+skipped, so re-running after a failure resumes rather than paying twice.
 
 ### Data model
 

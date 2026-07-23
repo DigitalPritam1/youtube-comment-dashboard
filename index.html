@@ -90,6 +90,9 @@
   .keymode{display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;font-size:13px;color:var(--text-sec);}
   .keymode label{display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:13px;font-weight:400;color:var(--text-sec);margin:0;}
   .keymode input{width:auto;}
+  .modelrow{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-top:14px;}
+  select{width:100%;padding:10px 12px;border:1px solid var(--border-strong);border-radius:8px;background:var(--card);color:var(--text);font-size:13px;font-family:var(--mono);}
+  select:focus{outline:2px solid var(--accent);outline-offset:1px;}
   .chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;}
   .chip{border:1px solid var(--border-strong);border-radius:20px;padding:5px 12px;font-size:12px;cursor:pointer;background:transparent;color:var(--text-sec);font-family:var(--sans);font-weight:500;}
   .chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);}
@@ -199,11 +202,17 @@
       <h2>Analysis</h2>
       <div id="analysisEmpty">
         <p class="hint" style="margin-top:0;">
-          Run a Claude pass over these comments to tag sentiment, cluster themes, and flag
+          Run a model over these comments to tag sentiment, cluster themes, and flag
           likely leads, questions, and complaints. Requires being signed in.
         </p>
-        <button id="analyzeBtn">Analyse comments</button>
-        <span class="hint" id="analyzeCost" style="margin-left:10px;"></span>
+        <div class="modelrow">
+          <div style="flex:1;min-width:240px;">
+            <label for="modelSelect">Model — best first</label>
+            <select id="modelSelect"><option value="anthropic::claude-opus-4-8">Claude Opus 4.8 (direct)</option></select>
+          </div>
+          <button id="analyzeBtn">Analyse comments</button>
+        </div>
+        <p class="hint" id="modelMeta"></p>
       </div>
       <div id="analysisBody" style="display:none;">
         <div class="senti" id="sentiBar" role="img" aria-label="Sentiment breakdown"></div>
@@ -805,6 +814,7 @@ async function renderRuns() {
   try { runs = await store().list(); }
   catch (e) { showAlert('Could not load saved runs: ' + (e.message || e)); }
 
+  loadModels();
   const localCount = session ? (await LocalRunStore.list().catch(() => [])).length : 0;
   $('uploadLocalBtn').style.display = localCount ? 'inline-block' : 'none';
   if (localCount) $('uploadLocalBtn').textContent = `Upload this device's ${localCount} run(s) to the cloud`;
@@ -873,6 +883,92 @@ const ANALYSIS_BATCH = 40;
 const CATEGORIES = ['lead', 'question', 'complaint', 'praise', 'spam', 'other'];
 let catFilter = null;
 let analysisStats = null;
+let modelCatalogue = null;
+
+const fmtPrice = (v) => v === 0 ? 'free' : '$' + (v < 1 ? v.toFixed(3) : v.toFixed(2));
+const fmtCtx = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : Math.round(n / 1000) + 'K';
+
+function modelLabel(m) {
+  const price = m.free ? 'free' : `${fmtPrice(m.priceIn)}/${fmtPrice(m.priceOut)} per M`;
+  return `${m.name} — ${price} · ${fmtCtx(m.context_length || 0)} ctx`;
+}
+
+/* The catalogue is fetched live from the server, so new model releases show up
+   without redeploying this page. */
+async function loadModels() {
+  if (!session || modelCatalogue) return;
+  try {
+    const res = await fetch(SUPABASE_URL + '/functions/v1/analyze-comments', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + session.access_token
+      },
+      body: JSON.stringify({ action: 'list_models' })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error?.message || 'Could not load models.');
+    modelCatalogue = data;
+    renderModelOptions();
+  } catch (e) {
+    $('modelMeta').textContent = 'Model list unavailable: ' + (e.message || e);
+  }
+}
+
+function renderModelOptions() {
+  if (!modelCatalogue) return;
+  const sel = $('modelSelect');
+  const all = modelCatalogue.models || [];
+  // rank < 50 means the server matched it against the curated capability order.
+  const curated = all.filter(m => m.rank < 50 && !m.free);
+  const free = all.filter(m => m.free);
+  const rest = all.filter(m => m.rank >= 50 && !m.free);
+
+  const group = (label, items) => items.length
+    ? `<optgroup label="${label}">` + items.map(m =>
+        `<option value="openrouter::${escapeHtml(m.id)}">${escapeHtml(modelLabel(m))}</option>`
+      ).join('') + '</optgroup>'
+    : '';
+
+  const a = modelCatalogue.anthropic;
+  sel.innerHTML =
+    `<optgroup label="Recommended">` +
+      `<option value="anthropic::${a.id}">${escapeHtml(a.name)} — ${fmtPrice(a.priceIn)}/${fmtPrice(a.priceOut)} per M · 1.0M ctx</option>` +
+      curated.map(m => `<option value="openrouter::${escapeHtml(m.id)}">${escapeHtml(modelLabel(m))}</option>`).join('') +
+    `</optgroup>` +
+    group(`Free (${free.length})`, free) +
+    group(`All other paid models (${rest.length})`, rest);
+
+  Settings.get('yt_model').then(saved => {
+    if (saved && sel.querySelector(`option[value="${CSS.escape(saved)}"]`)) sel.value = saved;
+    updateModelMeta();
+  });
+}
+
+function updateModelMeta() {
+  const [provider, id] = ($('modelSelect').value || '').split('::');
+  const notes = [];
+  if (provider === 'anthropic') {
+    notes.push(modelCatalogue?.anthropic_ready === false
+      ? 'ANTHROPIC_API_KEY is not set on the server yet.'
+      : 'Runs against the Anthropic API directly.');
+  } else {
+    const m = (modelCatalogue?.models || []).find(x => x.id === id);
+    if (modelCatalogue?.openrouter_ready === false) {
+      notes.push('OPENROUTER_API_KEY is not set on the server yet.');
+    } else if (m) {
+      notes.push('Via OpenRouter.');
+      if (m.free) notes.push('Free tier — expect rate limits and lower accuracy.');
+      if (!m.structured) notes.push('No strict JSON mode; output is parsed leniently.');
+    }
+  }
+  $('modelMeta').textContent = notes.join(' ');
+}
+
+$('modelSelect').addEventListener('change', async () => {
+  await Settings.set('yt_model', $('modelSelect').value);
+  updateModelMeta();
+});
 
 function analysedCount() {
   return allComments.reduce((n, c) => n + (c.sentiment ? 1 : 0), 0);
@@ -886,6 +982,8 @@ async function runAnalysis() {
   // failure resumes instead of paying for the same comments twice.
   const pending = allComments.map((c, idx) => ({ c, idx })).filter(x => !x.c.sentiment);
   if (!pending.length) { showAlert('Every comment has already been analysed.'); return; }
+
+  const [provider, modelId] = ($('modelSelect').value || 'anthropic::').split('::');
 
   $('analyzeBtn').disabled = true;
   $('progressWrap').style.display = 'block';
@@ -904,7 +1002,10 @@ async function runAnalysis() {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ' + session.access_token
         },
-        body: JSON.stringify({ comments: slice.map(x => ({ text: x.c.text })) })
+        body: JSON.stringify({
+          comments: slice.map(x => ({ text: x.c.text })),
+          provider, model: modelId
+        })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error?.message || 'Analysis failed.');
@@ -922,13 +1023,13 @@ async function runAnalysis() {
       model = data.model || model;
     }
 
-    analysisStats = { count: analysedCount(), cost, model };
+    analysisStats = { count: analysedCount(), cost, model, provider };
     setProgress(100, `Analysed ${done} comments.`);
     renderAnalysis();
     applyFilters();
     await persistAnalysis();
   } catch (e) {
-    analysisStats = { count: analysedCount(), cost, model };
+    analysisStats = { count: analysedCount(), cost, model, provider };
     showAlert('Analysis stopped: ' + (e.message || e) + ' Results so far are kept.');
     renderAnalysis();
     applyFilters();
@@ -1000,6 +1101,7 @@ function renderAnalysis() {
   const bits = [`${n.toLocaleString()} of ${allComments.length.toLocaleString()} comments analysed`];
   if (analysisStats?.cost) bits.push(`≈ $${analysisStats.cost.toFixed(4)}`);
   if (analysisStats?.model) bits.push(analysisStats.model);
+  if (analysisStats?.provider === 'openrouter') bits.push('via OpenRouter');
   $('analysisMeta').textContent = bits.join(' · ');
 }
 
@@ -1134,7 +1236,9 @@ document.querySelectorAll('[name=keysrc]').forEach(r =>
 sb.auth.onAuthStateChange(async (_event, newSession) => {
   const had = !!session;
   session = newSession;
+  modelCatalogue = null;
   updateAuthUI();
+  loadModels();
   if (!had && session) await applyKeyMode((await Settings.get('yt_key_mode')) || 'proxy');
   try { await renderRuns(); } catch (e) {}
 });
