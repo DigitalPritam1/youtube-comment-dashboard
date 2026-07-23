@@ -70,13 +70,65 @@ pip install google-api-python-client
 python youtube_comment_extractor.py --channel @IndianFarmerOfficial --api_key YOUR_KEY
 ```
 
+## Cloud mode (optional)
+
+Signing in is **optional** — signed out, the dashboard works exactly as before and
+saves runs to this browser only. Signing in adds:
+
+- **Cross-device history** — runs stored in Postgres, not just this browser.
+- **A shared server-side key** — the YouTube key lives in an edge function, so it
+  is never exposed to the browser.
+- **Upload** — a button to copy this device's local runs into your account.
+
+Sign-in is a **magic link** (no passwords). Backend: Supabase project
+`youtube-comment-dashboard` (`aycfiqndcavzgipgurih`, region `ap-south-1`).
+
+### Setup the owner must do
+
+**1. Set the shared YouTube key.** In the Supabase dashboard →
+*Edge Functions → Secrets*, add `YOUTUBE_API_KEY` with your key. Until this is
+set, the proxy returns a clear 503 and "use my own key" still works.
+
+**2. Approve who may use it.** The dashboard is on a public URL, so anyone can
+create an account. Their own data stays isolated by row-level security, but only
+allowlisted addresses may spend the shared key:
+
+```sql
+insert into public.allowed_emails (email, note) values ('teammate@example.com', 'why');
+```
+
+`pritam@indianfarmer.com` is already listed.
+
+**3. Email delivery.** Supabase's built-in SMTP is rate-limited to a handful of
+messages per hour — fine for one person, not for a team. Configure custom SMTP
+under *Authentication → Emails* before more than one or two people rely on it.
+
+### Data model
+
+| Table | Purpose |
+|---|---|
+| `runs` | One row per saved extraction (name, source, totals, per-video stats) |
+| `comments` | One row per comment, `run_id` FK with cascade delete |
+| `allowed_emails` | Who may use the shared key. RLS on, no policies — unreachable from the browser by design |
+
+Both `runs` and `comments` are protected by RLS: every policy filters on
+`user_id = auth.uid()`, so one account can never read or modify another's rows.
+
+## Caveats
+
+- **Free-tier projects pause after ~7 days of inactivity** and need a manual
+  unpause in the Supabase dashboard. If the tool is used only occasionally, the
+  signed-out local mode is the more reliable default.
+- Cloud runs are **not** pruned to 10 the way local runs are — accumulating
+  history is the point of the database.
+- Excel export uses SheetJS's community build: column widths, freeze panes, and
+  autofilter work, but cell styling (fonts, fills, colours) is a paid feature.
+
 ## Roadmap
 
-Not yet built — these need a backend (Supabase or similar):
+Still to build:
 
-- Cross-device history and multi-user accounts
-- A key proxy so a shared team key is never exposed client-side
-- Scheduled/automatic exports (daily pull to Drive or email)
+- Scheduled/automatic pulls (cron → database, no one at the keyboard)
 - Google Sheets direct export
 - LLM sentiment analysis, theme clustering, and lead/complaint flagging
 - Instagram/Facebook comment extraction via the Meta Graph API

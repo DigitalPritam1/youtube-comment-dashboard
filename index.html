@@ -6,6 +6,7 @@
 <title>YouTube Comment Dashboard</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
   :root{
     --bg:#f6f4ee; --card:#ffffff; --border:#e2ded2; --border-strong:#c9c3b0;
@@ -80,6 +81,15 @@
   .run-meta{flex:1;min-width:180px;}
   .run-name{font-size:14px;font-weight:600;}
   .run-sub{font-size:12px;color:var(--text-mut);font-family:var(--mono);margin-top:2px;}
+  .authbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .authbar input{max-width:260px;}
+  .who{font-size:13px;color:var(--text-sec);flex:1;min-width:160px;}
+  .who b{color:var(--text);font-weight:600;}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent);margin-right:6px;}
+  .dot.off{background:var(--text-mut);}
+  .keymode{display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;font-size:13px;color:var(--text-sec);}
+  .keymode label{display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:13px;font-weight:400;color:var(--text-sec);margin:0;}
+  .keymode input{width:auto;}
   /* Phone: turn each comment row into a stacked card. */
   @media(max-width:640px){
     .wrap{padding:20px 14px 60px;}
@@ -109,6 +119,19 @@
   </div>
 
   <div class="card">
+    <div class="authbar">
+      <div class="who" id="whoami"><span class="dot off"></span>Not signed in — runs are saved on this device only.</div>
+      <input type="text" id="emailInput" placeholder="you@example.com" inputmode="email" />
+      <button class="ghost" id="signInBtn">Email me a link</button>
+      <button class="ghost" id="signOutBtn" style="display:none;">Sign out</button>
+    </div>
+    <p class="hint" id="authHint">
+      Signing in is optional. It stores your runs in the cloud so they follow you across devices,
+      and lets you use a shared server-side API key instead of your own.
+    </p>
+  </div>
+
+  <div class="card">
     <div class="row">
       <div>
         <label for="sourceInput">Channel, playlist, or video</label>
@@ -122,11 +145,15 @@
         <button id="fetchBtn">Fetch comments</button>
       </div>
     </div>
+    <div class="keymode" id="keyMode" style="display:none;">
+      <label><input type="radio" name="keysrc" value="proxy" /> Use the shared server key</label>
+      <label><input type="radio" name="keysrc" value="own" /> Use my own key</label>
+    </div>
     <div class="src-badge" id="srcBadge" style="display:none;"></div>
     <p class="hint">
       Paste any of: <code>@handle</code>, a channel ID or URL, a playlist URL, a video URL
       (<code>watch?v=</code>, <code>youtu.be</code>, <code>/shorts/</code>), or a bare video ID.
-      Everything runs in your browser — your API key is saved on this device only and is sent nowhere but Google's API.
+      With your own key, everything runs in your browser and the key is saved on this device only.
     </p>
     <div class="progress-wrap" id="progressWrap">
       <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
@@ -138,7 +165,8 @@
   <div class="card" id="runsCard" style="display:none;">
     <h2>Saved runs</h2>
     <ul class="runs" id="runsList"></ul>
-    <p class="hint">Stored in this browser (IndexedDB). The 10 most recent runs are kept.</p>
+    <p class="hint" id="runsHint">Stored in this browser (IndexedDB). The 10 most recent runs are kept.</p>
+    <button class="ghost tiny" id="uploadLocalBtn" style="display:none;">Upload this device's runs to the cloud</button>
   </div>
 
   <div id="resultsArea" style="display:none;">
@@ -181,8 +209,18 @@ const MAX_RUNS = 10;
 const $ = (id) => document.getElementById(id);
 
 /* ---------------------------------------------------------------
-   Storage. Two layers, both async so a remote backend (Supabase)
-   can be dropped in later without touching call sites.
+   Supabase
+   --------------------------------------------------------------- */
+
+const SUPABASE_URL = 'https://aycfiqndcavzgipgurih.supabase.co';
+const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_Fb5vTDz7dWlfk2-l7i4LAg_XRlCYwH2';
+
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+let session = null;
+
+/* ---------------------------------------------------------------
+   Storage. Both stores expose the same async shape, so `store()`
+   can swap between device-local and cloud without call sites caring.
    --------------------------------------------------------------- */
 
 const Settings = {
@@ -190,7 +228,7 @@ const Settings = {
   async set(key, val) { try { localStorage.setItem(key, val); } catch (e) {} }
 };
 
-const RunStore = {
+const LocalRunStore = {
   _db: null,
   async _open() {
     if (this._db) return this._db;
@@ -238,6 +276,94 @@ const RunStore = {
     return this._tx('readwrite', (s) => s.put(run));
   }
 };
+
+/* Cloud store. Comments live in their own table (one row each) so history
+   can be queried in SQL later, rather than sitting in an opaque JSON blob. */
+const CloudRunStore = {
+  _toDb(c, runId, userId) {
+    return {
+      run_id: runId, user_id: userId,
+      video_id: c.video_id, video_title: c.video_title,
+      author: c.author, text: c.text,
+      published_at: c.date || null,
+      likes: c.likes || 0, reply_count: c.replies || 0, is_reply: !!c.is_reply
+    };
+  },
+  _fromDb(r) {
+    return {
+      video_id: r.video_id, video_title: r.video_title,
+      author: r.author, text: r.text, date: r.published_at,
+      likes: r.likes, replies: r.reply_count, is_reply: r.is_reply
+    };
+  },
+  async list() {
+    const { data, error } = await sb.from('runs')
+      .select('id,name,source_type,source_label,total_videos,total_comments,created_at')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return (data || []).map(r => ({
+      id: r.id, name: r.name, sourceType: r.source_type, sourceLabel: r.source_label,
+      totalVideos: r.total_videos, totalComments: r.total_comments,
+      createdAt: new Date(r.created_at).getTime()
+    }));
+  },
+  async get(id) {
+    const { data: run, error } = await sb.from('runs').select('*').eq('id', id).single();
+    if (error) throw error;
+    // PostgREST caps a response at 1000 rows, so page through explicitly.
+    const comments = [];
+    const PAGE = 1000;
+    for (let from = 0; ; from += PAGE) {
+      const { data, error: cErr } = await sb.from('comments')
+        .select('*').eq('run_id', id).order('id').range(from, from + PAGE - 1);
+      if (cErr) throw cErr;
+      comments.push(...(data || []).map(this._fromDb));
+      if (!data || data.length < PAGE) break;
+    }
+    return {
+      id: run.id, name: run.name, sourceType: run.source_type, sourceLabel: run.source_label,
+      createdAt: new Date(run.created_at).getTime(),
+      totalComments: run.total_comments, totalVideos: run.total_videos,
+      videoStats: run.video_stats || [], comments
+    };
+  },
+  async save(run) {
+    const userId = session.user.id;
+    const { data, error } = await sb.from('runs').insert({
+      user_id: userId, name: run.name,
+      source_type: run.sourceType, source_label: run.sourceLabel,
+      total_videos: run.totalVideos, total_comments: run.totalComments,
+      video_stats: run.videoStats
+    }).select('id').single();
+    if (error) throw error;
+
+    const runId = data.id;
+    const CHUNK = 500;
+    for (let i = 0; i < run.comments.length; i += CHUNK) {
+      const rows = run.comments.slice(i, i + CHUNK).map(c => this._toDb(c, runId, userId));
+      const { error: cErr } = await sb.from('comments').insert(rows);
+      if (cErr) {
+        // Don't leave a run row pointing at half its comments.
+        await sb.from('runs').delete().eq('id', runId);
+        throw cErr;
+      }
+      if (run.comments.length > CHUNK) {
+        setProgress(Math.round((i / run.comments.length) * 100), `Uploading ${i}/${run.comments.length}…`);
+      }
+    }
+    return runId;
+  },
+  async remove(id) {
+    const { error } = await sb.from('runs').delete().eq('id', id); // comments cascade
+    if (error) throw error;
+  },
+  async rename(id, name) {
+    const { error } = await sb.from('runs').update({ name }).eq('id', id);
+    if (error) throw error;
+  }
+};
+
+const store = () => (session ? CloudRunStore : LocalRunStore);
 
 /* ---------------------------------------------------------------
    Input parsing — channel / playlist / video from almost any paste
@@ -292,12 +418,29 @@ function parseSource(raw) {
    YouTube API
    --------------------------------------------------------------- */
 
-async function ytFetch(endpoint, params, apiKey) {
-  const url = new URL('https://www.googleapis.com/youtube/v3/' + endpoint);
-  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
-  url.searchParams.set('key', apiKey);
-  const res = await fetch(url.toString());
-  const data = await res.json();
+// 'proxy' routes through the edge function (shared server-side key);
+// 'own' calls Google directly with the key typed into the page.
+const Api = { mode: 'own', key: '' };
+const usingProxy = () => Api.mode === 'proxy' && !!session;
+
+async function ytFetch(endpoint, params) {
+  let res, data;
+  if (usingProxy()) {
+    res = await fetch(SUPABASE_URL + '/functions/v1/yt-proxy', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + session.access_token
+      },
+      body: JSON.stringify({ endpoint, params })
+    });
+  } else {
+    const url = new URL('https://www.googleapis.com/youtube/v3/' + endpoint);
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+    url.searchParams.set('key', Api.key);
+    res = await fetch(url.toString());
+  }
+  try { data = await res.json(); } catch (e) { data = {}; }
   if (!res.ok) {
     const err = new Error(data.error?.message || 'API error');
     err.reason = data.error?.errors?.[0]?.reason || '';
@@ -321,29 +464,29 @@ function friendlyError(e) {
   return e.message;
 }
 
-async function resolveChannelId(source, apiKey) {
+async function resolveChannelId(source) {
   if (source.type === 'channel') return source.value;
   if (source.type === 'handle') {
-    const r = await ytFetch('channels', { part: 'id', forHandle: source.value }, apiKey);
+    const r = await ytFetch('channels', { part: 'id', forHandle: source.value });
     if (r.items && r.items.length) return r.items[0].id;
   }
   // Fallback: search.list costs 100 quota units, so it is a last resort only.
-  const r2 = await ytFetch('search', { part: 'snippet', q: source.value, type: 'channel', maxResults: 1 }, apiKey);
+  const r2 = await ytFetch('search', { part: 'snippet', q: source.value, type: 'channel', maxResults: 1 });
   if (!r2.items || !r2.items.length) throw new Error('Channel not found: ' + source.value);
   return r2.items[0].snippet.channelId;
 }
 
-async function getUploadsPlaylist(channelId, apiKey) {
-  const r = await ytFetch('channels', { part: 'contentDetails', id: channelId }, apiKey);
+async function getUploadsPlaylist(channelId) {
+  const r = await ytFetch('channels', { part: 'contentDetails', id: channelId });
   if (!r.items || !r.items.length) throw new Error('Channel not found: ' + channelId);
   return r.items[0].contentDetails.relatedPlaylists.uploads;
 }
 
-async function getPlaylistVideos(playlistId, apiKey, onPage) {
+async function getPlaylistVideos(playlistId, onPage) {
   let videos = [];
   let pageToken = '';
   do {
-    const r = await ytFetch('playlistItems', { part: 'snippet', playlistId, maxResults: 50, pageToken }, apiKey);
+    const r = await ytFetch('playlistItems', { part: 'snippet', playlistId, maxResults: 50, pageToken });
     (r.items || []).forEach(it => {
       const id = it.snippet?.resourceId?.videoId;
       const title = it.snippet?.title || '';
@@ -356,30 +499,30 @@ async function getPlaylistVideos(playlistId, apiKey, onPage) {
   return videos;
 }
 
-async function getSingleVideo(videoId, apiKey) {
-  const r = await ytFetch('videos', { part: 'snippet', id: videoId }, apiKey);
+async function getSingleVideo(videoId) {
+  const r = await ytFetch('videos', { part: 'snippet', id: videoId });
   if (!r.items || !r.items.length) throw new Error('Video not found: ' + videoId);
   return [{ id: videoId, title: r.items[0].snippet.title }];
 }
 
-async function resolveVideos(source, apiKey) {
+async function resolveVideos(source) {
   if (source.type === 'video') {
     setProgress(8, 'Loading video…');
-    return getSingleVideo(source.value, apiKey);
+    return getSingleVideo(source.value);
   }
   if (source.type === 'playlist') {
     setProgress(8, 'Listing playlist videos…');
-    return getPlaylistVideos(source.value, apiKey, (n) => setProgress(9, `Listing playlist videos… ${n} found`));
+    return getPlaylistVideos(source.value, (n) => setProgress(9, `Listing playlist videos… ${n} found`));
   }
   setProgress(4, 'Resolving channel…');
-  const channelId = await resolveChannelId(source, apiKey);
+  const channelId = await resolveChannelId(source);
   setProgress(7, 'Getting upload list…');
-  const uploads = await getUploadsPlaylist(channelId, apiKey);
+  const uploads = await getUploadsPlaylist(channelId);
   setProgress(9, 'Listing videos…');
-  return getPlaylistVideos(uploads, apiKey, (n) => setProgress(9, `Listing videos… ${n} found`));
+  return getPlaylistVideos(uploads, (n) => setProgress(9, `Listing videos… ${n} found`));
 }
 
-async function getCommentsForVideo(video, apiKey) {
+async function getCommentsForVideo(video) {
   let comments = [];
   let pageToken = '';
   try {
@@ -387,7 +530,7 @@ async function getCommentsForVideo(video, apiKey) {
       const r = await ytFetch('commentThreads', {
         part: 'snippet,replies', videoId: video.id, maxResults: 100,
         order: 'time', pageToken, textFormat: 'plainText'
-      }, apiKey);
+      });
       (r.items || []).forEach(item => {
         const top = item.snippet.topLevelComment.snippet;
         comments.push({
@@ -433,14 +576,16 @@ function showAlert(msg) {
 async function runFetch() {
   const raw = $('sourceInput').value;
   const apiKey = $('apiKeyInput').value.trim();
-  if (!raw.trim() || !apiKey) { showAlert('Enter both a source and an API key.'); return; }
+  if (!raw.trim()) { showAlert('Enter a channel, playlist, or video.'); return; }
+  if (!usingProxy() && !apiKey) { showAlert('Enter an API key, or sign in and use the shared server key.'); return; }
 
   let source;
   try { source = parseSource(raw); }
   catch (e) { showAlert(e.message); return; }
 
   currentSource = source;
-  await Settings.set('yt_api_key', apiKey);
+  Api.key = apiKey;
+  if (apiKey) await Settings.set('yt_api_key', apiKey);
   showAlert('');
   $('srcBadge').style.display = 'inline-block';
   $('srcBadge').textContent = source.type + ' → ' + source.label;
@@ -455,7 +600,7 @@ async function runFetch() {
   let stoppedEarly = null;
 
   try {
-    const videos = await resolveVideos(source, apiKey);
+    const videos = await resolveVideos(source);
     if (!videos.length) throw new Error('No videos found for that source.');
 
     let skipped = 0;
@@ -463,7 +608,7 @@ async function runFetch() {
       const v = videos[i];
       const pct = 10 + Math.round(((i + 1) / videos.length) * 88);
       setProgress(pct, `[${i + 1}/${videos.length}] ${v.title}`);
-      const { comments, fatal, error } = await getCommentsForVideo(v, apiKey);
+      const { comments, fatal, error } = await getCommentsForVideo(v);
 
       allComments.push(...comments);
       videoStats.push({ title: v.title, count: comments.length });
@@ -581,16 +726,19 @@ async function saveCurrentRun() {
     videoStats, comments: allComments
   };
   try {
-    await RunStore.save(run);
+    $('saveRunBtn').disabled = true;
+    await store().save(run);
     await renderRuns();
     showAlert('');
   } catch (e) {
-    showAlert('Could not save run: ' + e.message);
+    showAlert('Could not save run: ' + (e.message || e));
+  } finally {
+    $('saveRunBtn').disabled = false;
   }
 }
 
 async function loadRun(id) {
-  const run = await RunStore.get(id);
+  const run = await store().get(id);
   if (!run) return;
   allComments = run.comments || [];
   videoStats = run.videoStats || [];
@@ -603,8 +751,18 @@ async function loadRun(id) {
 }
 
 async function renderRuns() {
-  const runs = await RunStore.list();
-  $('runsCard').style.display = runs.length ? 'block' : 'none';
+  let runs = [];
+  try { runs = await store().list(); }
+  catch (e) { showAlert('Could not load saved runs: ' + (e.message || e)); }
+
+  const localCount = session ? (await LocalRunStore.list().catch(() => [])).length : 0;
+  $('uploadLocalBtn').style.display = localCount ? 'inline-block' : 'none';
+  if (localCount) $('uploadLocalBtn').textContent = `Upload this device's ${localCount} run(s) to the cloud`;
+  $('runsHint').textContent = session
+    ? 'Stored in your account — available on any device you sign in from.'
+    : 'Stored in this browser (IndexedDB). The 10 most recent runs are kept.';
+
+  $('runsCard').style.display = (runs.length || localCount) ? 'block' : 'none';
   $('runsList').innerHTML = runs.map(r => `
     <li>
       <div class="run-meta">
@@ -623,13 +781,37 @@ $('runsList').addEventListener('click', async (e) => {
   if (!btn) return;
   if (btn.dataset.load) return loadRun(btn.dataset.load);
   if (btn.dataset.del) {
-    if (confirm('Delete this saved run?')) { await RunStore.remove(btn.dataset.del); await renderRuns(); }
+    if (confirm('Delete this saved run?')) { await store().remove(btn.dataset.del); await renderRuns(); }
     return;
   }
   if (btn.dataset.rename) {
-    const run = await RunStore.get(btn.dataset.rename);
+    const run = await store().get(btn.dataset.rename);
     const name = prompt('Rename run:', run ? run.name : '');
-    if (name && name.trim()) { await RunStore.rename(btn.dataset.rename, name.trim()); await renderRuns(); }
+    if (name && name.trim()) { await store().rename(btn.dataset.rename, name.trim()); await renderRuns(); }
+  }
+});
+
+// One-way copy: local runs are left in place so nothing is lost if the upload
+// half-fails or the user signs into the wrong account.
+$('uploadLocalBtn').addEventListener('click', async () => {
+  if (!session) return;
+  const metas = await LocalRunStore.list();
+  if (!metas.length) return;
+  if (!confirm(`Copy ${metas.length} run(s) from this device into your account? The local copies are kept.`)) return;
+  $('uploadLocalBtn').disabled = true;
+  let ok = 0;
+  try {
+    for (const meta of metas) {
+      const full = await LocalRunStore.get(meta.id);
+      if (full) { await CloudRunStore.save(full); ok++; }
+    }
+    showAlert(`Uploaded ${ok} of ${metas.length} run(s).`);
+  } catch (e) {
+    showAlert(`Uploaded ${ok} of ${metas.length} before failing: ` + (e.message || e));
+  } finally {
+    $('uploadLocalBtn').disabled = false;
+    $('progressWrap').style.display = 'none';
+    await renderRuns();
   }
 });
 
@@ -700,10 +882,71 @@ document.querySelectorAll('[data-theme-set]').forEach(btn => {
   });
 });
 
+/* ---------------------------------------------------------------
+   Auth
+   --------------------------------------------------------------- */
+
+async function applyKeyMode(mode) {
+  Api.mode = mode;
+  const own = mode === 'own';
+  $('apiKeyInput').disabled = !own;
+  $('apiKeyInput').placeholder = own ? 'Paste your API key' : 'Using the shared server key';
+  document.querySelectorAll('[name=keysrc]').forEach(r => { r.checked = r.value === mode; });
+  await Settings.set('yt_key_mode', mode);
+}
+
+function updateAuthUI() {
+  const signedIn = !!session;
+  $('signOutBtn').style.display = signedIn ? 'inline-block' : 'none';
+  $('signInBtn').style.display = signedIn ? 'none' : 'inline-block';
+  $('emailInput').style.display = signedIn ? 'none' : 'inline-block';
+  $('keyMode').style.display = signedIn ? 'flex' : 'none';
+  $('whoami').innerHTML = signedIn
+    ? `<span class="dot"></span>Signed in as <b>${escapeHtml(session.user.email)}</b> — runs sync to your account.`
+    : '<span class="dot off"></span>Not signed in — runs are saved on this device only.';
+  // Without a session there is no proxy to call, so force own-key mode.
+  if (!signedIn) applyKeyMode('own');
+}
+
+$('signInBtn').addEventListener('click', async () => {
+  const email = $('emailInput').value.trim();
+  if (!email) { showAlert('Enter your email address first.'); return; }
+  $('signInBtn').disabled = true;
+  const { error } = await sb.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: location.origin + location.pathname }
+  });
+  $('signInBtn').disabled = false;
+  showAlert(error ? 'Could not send link: ' + error.message
+                  : `Sign-in link sent to ${email}. Open it on this device to finish.`);
+});
+
+$('signOutBtn').addEventListener('click', async () => {
+  await sb.auth.signOut();
+  showAlert('Signed out.');
+});
+
+document.querySelectorAll('[name=keysrc]').forEach(r =>
+  r.addEventListener('change', () => applyKeyMode(r.value)));
+
+sb.auth.onAuthStateChange(async (_event, newSession) => {
+  const had = !!session;
+  session = newSession;
+  updateAuthUI();
+  if (!had && session) await applyKeyMode((await Settings.get('yt_key_mode')) || 'proxy');
+  try { await renderRuns(); } catch (e) {}
+});
+
 (async function init() {
   applyTheme((await Settings.get('yt_theme')) || 'auto');
   const savedKey = await Settings.get('yt_api_key');
   if (savedKey) $('apiKeyInput').value = savedKey;
+
+  const { data } = await sb.auth.getSession();
+  session = data.session || null;
+  updateAuthUI();
+  if (session) await applyKeyMode((await Settings.get('yt_key_mode')) || 'proxy');
+
   try { await renderRuns(); } catch (e) { /* IndexedDB blocked (e.g. private mode) */ }
 })();
 </script>
