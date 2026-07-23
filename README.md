@@ -85,13 +85,17 @@ Sign-in is a **magic link** (no passwords). Backend: Supabase project
 
 ### Setup the owner must do
 
-**1. Set the shared YouTube key.** In the Supabase dashboard →
-*Edge Functions → Secrets*, add `YOUTUBE_API_KEY` with your key. Until this is
-set, the proxy returns a clear 503 and "use my own key" still works.
+**1. Set the shared keys.** In the Supabase dashboard → *Edge Functions →
+Secrets*, add:
 
-**2. Approve who may use it.** The dashboard is on a public URL, so anyone can
+- `YOUTUBE_API_KEY` — your YouTube Data API v3 key. Until this is set, the proxy
+  returns a clear 503 and "use my own key" still works.
+- `ANTHROPIC_API_KEY` — your Anthropic API key, for comment analysis. Until this
+  is set, the Analyse button returns a clear 503 and everything else still works.
+
+**2. Approve who may use them.** The dashboard is on a public URL, so anyone can
 create an account. Their own data stays isolated by row-level security, but only
-allowlisted addresses may spend the shared key:
+allowlisted addresses may spend the shared YouTube or Anthropic keys:
 
 ```sql
 insert into public.allowed_emails (email, note) values ('teammate@example.com', 'why');
@@ -103,13 +107,37 @@ insert into public.allowed_emails (email, note) values ('teammate@example.com', 
 messages per hour — fine for one person, not for a team. Configure custom SMTP
 under *Authentication → Emails* before more than one or two people rely on it.
 
+## Comment analysis
+
+Signed-in users can run a **Claude pass** over the extracted comments. Each comment
+is tagged with:
+
+- **Sentiment** — positive / neutral / negative, judged on the commenter's attitude
+  rather than the topic (a polite question about crop disease is neutral, not negative).
+- **Category** — `lead` (buying or enrolment intent), `question`, `complaint`,
+  `praise`, `spam`, `other`.
+- **Theme** — a short topic label, reused across comments so themes group together.
+
+The dashboard then shows a sentiment bar, the top themes by volume, and clickable
+category chips that filter the table — so "show me every lead" is one click. Tags
+also appear inline in the table, and all three fields are included in the CSV, JSON,
+and Excel exports.
+
+The prompt is written for **Hindi, English, and mixed Hinglish** comments, since
+that's what an Indian farming channel actually gets.
+
+**Cost.** Analysis runs on `claude-opus-4-8` at $5/$25 per million input/output
+tokens. The dashboard reports the actual spend after each run. Comments are sent in
+batches of 40; already-analysed comments are skipped, so re-running after a failure
+resumes rather than paying twice.
+
 ### Data model
 
 | Table | Purpose |
 |---|---|
 | `runs` | One row per saved extraction (name, source, totals, per-video stats) |
-| `comments` | One row per comment, `run_id` FK with cascade delete |
-| `allowed_emails` | Who may use the shared key. RLS on, no policies — unreachable from the browser by design |
+| `comments` | One row per comment, `run_id` FK with cascade delete. Analysis results (`sentiment`, `category`, `theme`, `analyzed_at`) live here too, so sentiment can be compared across runs over time |
+| `allowed_emails` | Who may use the shared keys. RLS on, no policies — unreachable from the browser by design |
 
 Both `runs` and `comments` are protected by RLS: every policy filters on
 `user_id = auth.uid()`, so one account can never read or modify another's rows.
@@ -130,5 +158,5 @@ Still to build:
 
 - Scheduled/automatic pulls (cron → database, no one at the keyboard)
 - Google Sheets direct export
-- LLM sentiment analysis, theme clustering, and lead/complaint flagging
+- Periodic digest summarising new leads and complaints since the last run
 - Instagram/Facebook comment extraction via the Meta Graph API

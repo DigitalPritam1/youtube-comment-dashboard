@@ -90,6 +90,25 @@
   .keymode{display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;font-size:13px;color:var(--text-sec);}
   .keymode label{display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:13px;font-weight:400;color:var(--text-sec);margin:0;}
   .keymode input{width:auto;}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;}
+  .chip{border:1px solid var(--border-strong);border-radius:20px;padding:5px 12px;font-size:12px;cursor:pointer;background:transparent;color:var(--text-sec);font-family:var(--sans);font-weight:500;}
+  .chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);}
+  .chip .c{font-family:var(--mono);opacity:.75;margin-left:5px;}
+  .senti{display:flex;height:10px;border-radius:5px;overflow:hidden;margin:4px 0 10px;background:var(--border);}
+  .senti span{display:block;}
+  .senti .pos{background:var(--accent);}
+  .senti .neu{background:var(--text-mut);}
+  .senti .neg{background:var(--danger);}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--text-sec);}
+  .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;font-style:normal;}
+  .themes{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;}
+  .theme-tag{background:var(--border);border-radius:6px;padding:4px 9px;font-size:12px;color:var(--text-sec);}
+  .theme-tag b{color:var(--text);font-family:var(--mono);font-weight:600;}
+  .tag{display:inline-block;border-radius:5px;padding:1px 6px;font-size:10px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.03em;}
+  .tag.lead{background:rgba(180,132,42,.18);color:var(--gold);}
+  .tag.complaint{background:rgba(165,64,47,.15);color:var(--danger);}
+  .tag.question{background:rgba(47,82,51,.14);color:var(--accent);}
+  .tag.praise,.tag.spam,.tag.other{background:var(--border);color:var(--text-mut);}
   /* Phone: turn each comment row into a stacked card. */
   @media(max-width:640px){
     .wrap{padding:20px 14px 60px;}
@@ -176,6 +195,27 @@
       <div class="chart-box"><canvas id="topChart" role="img" aria-label="Top videos by comment count"></canvas></div>
     </div>
 
+    <div class="card" id="analysisCard">
+      <h2>Analysis</h2>
+      <div id="analysisEmpty">
+        <p class="hint" style="margin-top:0;">
+          Run a Claude pass over these comments to tag sentiment, cluster themes, and flag
+          likely leads, questions, and complaints. Requires being signed in.
+        </p>
+        <button id="analyzeBtn">Analyse comments</button>
+        <span class="hint" id="analyzeCost" style="margin-left:10px;"></span>
+      </div>
+      <div id="analysisBody" style="display:none;">
+        <div class="senti" id="sentiBar" role="img" aria-label="Sentiment breakdown"></div>
+        <div class="legend" id="sentiLegend"></div>
+        <div style="margin-top:16px;">
+          <label>Top themes</label>
+          <div class="themes" id="themeList"></div>
+        </div>
+        <p class="hint" id="analysisMeta"></p>
+      </div>
+    </div>
+
     <div class="card">
       <div class="toolbar">
         <input type="text" id="searchInput" placeholder="Search comments or authors…" />
@@ -186,6 +226,7 @@
           <button class="ghost" id="saveRunBtn">Save run</button>
         </div>
       </div>
+      <div class="chips" id="catChips" style="display:none;"></div>
       <table>
         <thead><tr><th>Comment</th><th>Author</th><th>Video</th><th>Likes</th><th>Date</th></tr></thead>
         <tbody id="tableBody"></tbody>
@@ -203,6 +244,7 @@ let videoStats = [];
 let filtered = [];
 let renderCount = 100;
 let currentSource = null;
+let currentRunId = null;   // set only when the open run came from the cloud
 const PAGE_SIZE = 100;
 const MAX_RUNS = 10;
 
@@ -286,14 +328,16 @@ const CloudRunStore = {
       video_id: c.video_id, video_title: c.video_title,
       author: c.author, text: c.text,
       published_at: c.date || null,
-      likes: c.likes || 0, reply_count: c.replies || 0, is_reply: !!c.is_reply
+      likes: c.likes || 0, reply_count: c.replies || 0, is_reply: !!c.is_reply,
+      sentiment: c.sentiment || null, category: c.category || null, theme: c.theme || null
     };
   },
   _fromDb(r) {
     return {
       video_id: r.video_id, video_title: r.video_title,
       author: r.author, text: r.text, date: r.published_at,
-      likes: r.likes, replies: r.reply_count, is_reply: r.is_reply
+      likes: r.likes, replies: r.reply_count, is_reply: r.is_reply,
+      sentiment: r.sentiment || undefined, category: r.category || undefined, theme: r.theme || undefined
     };
   },
   async list() {
@@ -597,6 +641,9 @@ async function runFetch() {
 
   allComments = [];
   videoStats = [];
+  currentRunId = null;
+  catFilter = null;
+  analysisStats = null;
   let stoppedEarly = null;
 
   try {
@@ -658,10 +705,9 @@ function renderResults() {
   `;
 
   renderChart();
-  filtered = allComments;
-  renderCount = PAGE_SIZE;
+  renderAnalysis();
   $('searchInput').value = '';
-  renderTable();
+  applyFilters();
 }
 
 let chartInstance;
@@ -696,7 +742,7 @@ function renderTable() {
   const slice = filtered.slice(0, renderCount);
   $('tableBody').innerHTML = slice.map(c => `
     <tr>
-      <td class="comment-text" data-label="Comment">${escapeHtml(truncate(c.text, 180))}${c.is_reply ? ' <span class="pill">reply</span>' : ''}</td>
+      <td class="comment-text" data-label="Comment">${escapeHtml(truncate(c.text, 180))}${c.is_reply ? ' <span class="pill">reply</span>' : ''}${c.category ? ` <span class="tag ${c.category}">${c.category}</span>` : ''}</td>
       <td data-label="Author">${escapeHtml(c.author)}</td>
       <td class="video-title" data-label="Video">${escapeHtml(truncate(c.video_title, 40))}</td>
       <td data-label="Likes">${c.likes}</td>
@@ -727,7 +773,8 @@ async function saveCurrentRun() {
   };
   try {
     $('saveRunBtn').disabled = true;
-    await store().save(run);
+    const newId = await store().save(run);
+    if (session && newId) currentRunId = newId;
     await renderRuns();
     showAlert('');
   } catch (e) {
@@ -742,6 +789,9 @@ async function loadRun(id) {
   if (!run) return;
   allComments = run.comments || [];
   videoStats = run.videoStats || [];
+  currentRunId = session ? id : null;
+  catFilter = null;
+  analysisStats = null;
   currentSource = { type: run.sourceType, value: '', label: run.sourceLabel };
   $('srcBadge').style.display = 'inline-block';
   $('srcBadge').textContent = `saved run → ${run.name}`;
@@ -816,11 +866,158 @@ $('uploadLocalBtn').addEventListener('click', async () => {
 });
 
 /* ---------------------------------------------------------------
+   Analysis (Claude, via the analyze-comments edge function)
+   --------------------------------------------------------------- */
+
+const ANALYSIS_BATCH = 40;
+const CATEGORIES = ['lead', 'question', 'complaint', 'praise', 'spam', 'other'];
+let catFilter = null;
+let analysisStats = null;
+
+function analysedCount() {
+  return allComments.reduce((n, c) => n + (c.sentiment ? 1 : 0), 0);
+}
+
+async function runAnalysis() {
+  if (!session) { showAlert('Sign in first — analysis runs on the server.'); return; }
+  if (!allComments.length) { showAlert('Fetch some comments first.'); return; }
+
+  // Only analyse what hasn't been analysed, so a re-run after a partial
+  // failure resumes instead of paying for the same comments twice.
+  const pending = allComments.map((c, idx) => ({ c, idx })).filter(x => !x.c.sentiment);
+  if (!pending.length) { showAlert('Every comment has already been analysed.'); return; }
+
+  $('analyzeBtn').disabled = true;
+  $('progressWrap').style.display = 'block';
+  showAlert('');
+  let cost = 0, done = 0, model = '';
+
+  try {
+    for (let i = 0; i < pending.length; i += ANALYSIS_BATCH) {
+      const slice = pending.slice(i, i + ANALYSIS_BATCH);
+      setProgress(Math.round((i / pending.length) * 100),
+        `Analysing ${i + 1}–${Math.min(i + ANALYSIS_BATCH, pending.length)} of ${pending.length}…`);
+
+      const res = await fetch(SUPABASE_URL + '/functions/v1/analyze-comments', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + session.access_token
+        },
+        body: JSON.stringify({ comments: slice.map(x => ({ text: x.c.text })) })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error?.message || 'Analysis failed.');
+
+      // Map results back by the index we sent, not by array position.
+      (data.results || []).forEach(r => {
+        const target = slice[r.i];
+        if (!target) return;
+        target.c.sentiment = r.sentiment;
+        target.c.category = r.category;
+        target.c.theme = (r.theme || '').toLowerCase().trim();
+        done++;
+      });
+      cost += data.usage?.cost_usd || 0;
+      model = data.model || model;
+    }
+
+    analysisStats = { count: analysedCount(), cost, model };
+    setProgress(100, `Analysed ${done} comments.`);
+    renderAnalysis();
+    applyFilters();
+    await persistAnalysis();
+  } catch (e) {
+    analysisStats = { count: analysedCount(), cost, model };
+    showAlert('Analysis stopped: ' + (e.message || e) + ' Results so far are kept.');
+    renderAnalysis();
+    applyFilters();
+  } finally {
+    $('analyzeBtn').disabled = false;
+  }
+}
+
+// Write analysis back to the cloud row when the open run came from the cloud.
+async function persistAnalysis() {
+  if (!session || !currentRunId) return;
+  const rows = allComments.filter(c => c.sentiment);
+  const CHUNK = 200;
+  try {
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      await Promise.all(rows.slice(i, i + CHUNK).map(c =>
+        sb.from('comments').update({
+          sentiment: c.sentiment, category: c.category,
+          theme: c.theme, analyzed_at: new Date().toISOString()
+        }).eq('run_id', currentRunId).eq('video_id', c.video_id).eq('author', c.author).eq('text', c.text)
+      ));
+    }
+  } catch (e) { /* analysis stays in memory; not fatal */ }
+}
+
+function renderAnalysis() {
+  const analysed = allComments.filter(c => c.sentiment);
+  if (!analysed.length) {
+    $('analysisBody').style.display = 'none';
+    $('analysisEmpty').style.display = 'block';
+    $('catChips').style.display = 'none';
+    return;
+  }
+  $('analysisBody').style.display = 'block';
+  $('analysisEmpty').style.display = analysed.length < allComments.length ? 'block' : 'none';
+
+  const n = analysed.length;
+  const by = (k) => analysed.filter(c => c.sentiment === k).length;
+  const pos = by('positive'), neu = by('neutral'), neg = by('negative');
+  const pct = (v) => (v / n) * 100;
+
+  $('sentiBar').innerHTML =
+    `<span class="pos" style="width:${pct(pos)}%"></span>` +
+    `<span class="neu" style="width:${pct(neu)}%"></span>` +
+    `<span class="neg" style="width:${pct(neg)}%"></span>`;
+  $('sentiLegend').innerHTML = [
+    ['pos', 'Positive', pos], ['neu', 'Neutral', neu], ['neg', 'Negative', neg]
+  ].map(([cls, label, v]) =>
+    `<span><i class="${cls}" style="background:var(${cls === 'pos' ? '--accent' : cls === 'neg' ? '--danger' : '--text-mut'})"></i>${label} ${v} (${Math.round(pct(v))}%)</span>`
+  ).join('');
+
+  // Themes, most common first.
+  const themes = {};
+  analysed.forEach(c => { if (c.theme) themes[c.theme] = (themes[c.theme] || 0) + 1; });
+  $('themeList').innerHTML = Object.entries(themes)
+    .sort((a, b) => b[1] - a[1]).slice(0, 15)
+    .map(([t, count]) => `<span class="theme-tag">${escapeHtml(t)} <b>${count}</b></span>`).join('')
+    || '<span class="hint">No themes found.</span>';
+
+  const counts = {};
+  CATEGORIES.forEach(cat => { counts[cat] = analysed.filter(c => c.category === cat).length; });
+  $('catChips').style.display = 'flex';
+  $('catChips').innerHTML =
+    `<button class="chip" data-cat="" aria-pressed="${catFilter === null}">All<span class="c">${allComments.length}</span></button>` +
+    CATEGORIES.filter(cat => counts[cat] > 0).map(cat =>
+      `<button class="chip" data-cat="${cat}" aria-pressed="${catFilter === cat}">${cat}<span class="c">${counts[cat]}</span></button>`
+    ).join('');
+
+  const bits = [`${n.toLocaleString()} of ${allComments.length.toLocaleString()} comments analysed`];
+  if (analysisStats?.cost) bits.push(`≈ $${analysisStats.cost.toFixed(4)}`);
+  if (analysisStats?.model) bits.push(analysisStats.model);
+  $('analysisMeta').textContent = bits.join(' · ');
+}
+
+$('catChips').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-cat]');
+  if (!btn) return;
+  catFilter = btn.dataset.cat || null;
+  renderAnalysis();
+  applyFilters();
+});
+$('analyzeBtn').addEventListener('click', runAnalysis);
+
+/* ---------------------------------------------------------------
    Export
    --------------------------------------------------------------- */
 
-const EXPORT_COLS = ['video_id','video_title','author','comment_text','date','likes','reply_count','is_reply'];
-const toRow = (c) => [c.video_id, c.video_title, c.author, c.text, c.date, c.likes, c.replies, c.is_reply];
+const EXPORT_COLS = ['video_id','video_title','author','comment_text','date','likes','reply_count','is_reply','sentiment','category','theme'];
+const toRow = (c) => [c.video_id, c.video_title, c.author, c.text, c.date, c.likes, c.replies, c.is_reply, c.sentiment || '', c.category || '', c.theme || ''];
 
 function toCsv(rows) {
   const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
@@ -838,7 +1035,7 @@ function download(filename, content, type) {
 
 function exportXlsx(rows) {
   const ws = XLSX.utils.aoa_to_sheet([EXPORT_COLS].concat(rows.map(toRow)));
-  ws['!cols'] = [{ wch: 13 }, { wch: 42 }, { wch: 22 }, { wch: 70 }, { wch: 20 }, { wch: 7 }, { wch: 8 }, { wch: 8 }];
+  ws['!cols'] = [{ wch: 13 }, { wch: 42 }, { wch: 22 }, { wch: 70 }, { wch: 20 }, { wch: 7 }, { wch: 8 }, { wch: 8 }, { wch: 10 }, { wch: 11 }, { wch: 22 }];
   ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { c: 0, r: 0 }, e: { c: EXPORT_COLS.length - 1, r: rows.length } }) };
   ws['!freeze'] = { xSplit: 0, ySplit: 1 };
   const wb = XLSX.utils.book_new();
@@ -855,13 +1052,18 @@ $('saveRunBtn').addEventListener('click', saveCurrentRun);
    Table interaction + theme
    --------------------------------------------------------------- */
 
-$('searchInput').addEventListener('input', (e) => {
-  const q = e.target.value.toLowerCase();
-  filtered = !q ? allComments : allComments.filter(c =>
-    c.text.toLowerCase().includes(q) || c.author.toLowerCase().includes(q));
+function applyFilters() {
+  const q = $('searchInput').value.trim().toLowerCase();
+  filtered = allComments.filter(c => {
+    if (catFilter && c.category !== catFilter) return false;
+    if (!q) return true;
+    return c.text.toLowerCase().includes(q) || c.author.toLowerCase().includes(q);
+  });
   renderCount = PAGE_SIZE;
   renderTable();
-});
+}
+
+$('searchInput').addEventListener('input', applyFilters);
 $('loadMoreBtn').addEventListener('click', () => { renderCount += PAGE_SIZE; renderTable(); });
 $('fetchBtn').addEventListener('click', runFetch);
 $('sourceInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') runFetch(); });
