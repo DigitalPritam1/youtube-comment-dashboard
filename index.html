@@ -5,25 +5,34 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>YouTube Comment Dashboard</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
     --bg:#f6f4ee; --card:#ffffff; --border:#e2ded2; --border-strong:#c9c3b0;
     --text:#20261f; --text-sec:#5b5f52; --text-mut:#8a8d7f;
-    --accent:#2f5233; --accent-fg:#eef3ea; --gold:#b4842a;
+    --accent:#2f5233; --accent-fg:#eef3ea; --gold:#b4842a; --danger:#a5402f;
     --mono: 'IBM Plex Mono', ui-monospace, monospace;
     --sans: 'Inter', -apple-system, sans-serif;
     --serif: 'Fraunces', Georgia, serif;
   }
+  /* Auto-follow the system, unless the user has explicitly chosen light. */
   @media (prefers-color-scheme: dark){
-    :root{
+    :root:not([data-theme="light"]){
       --bg:#161a15; --card:#1e231c; --border:#333829; --border-strong:#454b38;
       --text:#e8e8de; --text-sec:#a9ac9c; --text-mut:#7d8072;
-      --accent:#7cae7f; --accent-fg:#12160f; --gold:#d9ac5c;
+      --accent:#7cae7f; --accent-fg:#12160f; --gold:#d9ac5c; --danger:#e08b7a;
     }
+  }
+  /* Explicit choice always wins, in both directions. */
+  :root[data-theme="dark"]{
+    --bg:#161a15; --card:#1e231c; --border:#333829; --border-strong:#454b38;
+    --text:#e8e8de; --text-sec:#a9ac9c; --text-mut:#7d8072;
+    --accent:#7cae7f; --accent-fg:#12160f; --gold:#d9ac5c; --danger:#e08b7a;
   }
   *{box-sizing:border-box;}
   body{margin:0;font-family:var(--sans);background:var(--bg);color:var(--text);}
   .wrap{max-width:1080px;margin:0 auto;padding:32px 20px 80px;}
+  .topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;}
   h1{font-family:var(--serif);font-weight:600;font-size:28px;margin:0 0 4px;letter-spacing:-0.01em;}
   .sub{color:var(--text-sec);font-size:14px;margin:0 0 28px;}
   .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px 22px;margin-bottom:20px;}
@@ -35,18 +44,25 @@
   button{background:var(--accent);color:var(--accent-fg);border:none;border-radius:8px;padding:11px 18px;font-size:14px;font-weight:600;cursor:pointer;font-family:var(--sans);}
   button:hover{opacity:.9;}
   button.ghost{background:transparent;color:var(--text);border:1px solid var(--border-strong);}
+  button.tiny{padding:5px 10px;font-size:12px;font-weight:500;}
   button:disabled{opacity:.5;cursor:not-allowed;}
+  .theme-toggle{display:flex;border:1px solid var(--border-strong);border-radius:8px;overflow:hidden;flex-shrink:0;}
+  .theme-toggle button{background:transparent;color:var(--text-sec);border:none;border-radius:0;padding:6px 10px;font-size:12px;font-weight:500;}
+  .theme-toggle button[aria-pressed="true"]{background:var(--accent);color:var(--accent-fg);}
   .hint{font-size:12px;color:var(--text-mut);margin-top:8px;line-height:1.5;}
+  .src-badge{display:inline-block;font-family:var(--mono);font-size:11px;color:var(--text-sec);background:var(--border);border-radius:5px;padding:2px 7px;margin-top:8px;}
   .progress-wrap{margin-top:16px;display:none;}
   .progress-bar{height:6px;background:var(--border);border-radius:3px;overflow:hidden;}
   .progress-fill{height:100%;width:0%;background:var(--gold);transition:width .2s;}
   .progress-log{font-family:var(--mono);font-size:12px;color:var(--text-sec);margin-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .alert{border-left:3px solid var(--danger);background:rgba(165,64,47,.08);color:var(--text);padding:10px 14px;border-radius:0 8px 8px 0;font-size:13px;line-height:1.5;margin-top:14px;display:none;}
   .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:20px;}
   .stat{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px 18px;}
   .stat .n{font-family:var(--serif);font-size:26px;font-weight:600;color:var(--accent);}
   .stat .l{font-size:12px;color:var(--text-mut);margin-top:2px;}
   .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:14px;}
   .toolbar input{max-width:280px;}
+  .card h2{font-family:var(--serif);font-size:17px;font-weight:600;margin:0 0 12px;}
   table{width:100%;border-collapse:collapse;font-size:13px;}
   th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-mut);padding:8px 10px;border-bottom:1px solid var(--border-strong);}
   td{padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:top;}
@@ -56,34 +72,73 @@
   .pill{display:inline-block;background:rgba(180,132,42,.14);color:var(--gold);border-radius:20px;padding:2px 8px;font-size:11px;font-family:var(--mono);}
   .empty{text-align:center;padding:50px 20px;color:var(--text-mut);}
   .chart-box{position:relative;height:280px;}
-  .exportrow{display:flex;gap:10px;margin-top:14px;}
+  .exportrow{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;}
   .loadmore{display:block;margin:14px auto 0;}
+  .runs{list-style:none;margin:0;padding:0;}
+  .runs li{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;}
+  .runs li:last-child{border-bottom:none;}
+  .run-meta{flex:1;min-width:180px;}
+  .run-name{font-size:14px;font-weight:600;}
+  .run-sub{font-size:12px;color:var(--text-mut);font-family:var(--mono);margin-top:2px;}
+  /* Phone: turn each comment row into a stacked card. */
+  @media(max-width:640px){
+    .wrap{padding:20px 14px 60px;}
+    table,thead,tbody,th,td,tr{display:block;}
+    thead{display:none;}
+    tbody tr{border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px;}
+    tbody td{border:none;padding:4px 0;display:flex;gap:10px;align-items:baseline;}
+    tbody td::before{content:attr(data-label);flex:0 0 62px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-mut);}
+    tr:hover td{background:transparent;}
+    .comment-text{max-width:none;}
+    .toolbar input{max-width:none;width:100%;}
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>YouTube comment dashboard</h1>
-  <p class="sub">Pull every comment from any public channel, browse it, chart it, export it.</p>
+  <div class="topbar">
+    <div>
+      <h1>YouTube comment dashboard</h1>
+      <p class="sub">Pull every comment from a channel, playlist, or single video — browse it, chart it, export it.</p>
+    </div>
+    <div class="theme-toggle" role="group" aria-label="Colour theme">
+      <button data-theme-set="auto">Auto</button>
+      <button data-theme-set="light">Light</button>
+      <button data-theme-set="dark">Dark</button>
+    </div>
+  </div>
 
   <div class="card">
     <div class="row">
       <div>
-        <label>Channel (@handle, channel ID, or name)</label>
-        <input type="text" id="channelInput" placeholder="@IndianFarmerOfficial" />
+        <label for="sourceInput">Channel, playlist, or video</label>
+        <input type="text" id="sourceInput" placeholder="@IndianFarmerOfficial" />
       </div>
       <div>
-        <label>YouTube Data API key</label>
+        <label for="apiKeyInput">YouTube Data API key</label>
         <input type="password" id="apiKeyInput" placeholder="Paste your API key" />
       </div>
       <div>
         <button id="fetchBtn">Fetch comments</button>
       </div>
     </div>
-    <p class="hint">Runs entirely in your browser — your API key is stored locally on this device (not sent anywhere but Google's API) and never leaves this file. Don't share this file with the key filled in.</p>
+    <div class="src-badge" id="srcBadge" style="display:none;"></div>
+    <p class="hint">
+      Paste any of: <code>@handle</code>, a channel ID or URL, a playlist URL, a video URL
+      (<code>watch?v=</code>, <code>youtu.be</code>, <code>/shorts/</code>), or a bare video ID.
+      Everything runs in your browser — your API key is saved on this device only and is sent nowhere but Google's API.
+    </p>
     <div class="progress-wrap" id="progressWrap">
       <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
       <div class="progress-log" id="progressLog">Starting…</div>
     </div>
+    <div class="alert" id="alertBox"></div>
+  </div>
+
+  <div class="card" id="runsCard" style="display:none;">
+    <h2>Saved runs</h2>
+    <ul class="runs" id="runsList"></ul>
+    <p class="hint">Stored in this browser (IndexedDB). The 10 most recent runs are kept.</p>
   </div>
 
   <div id="resultsArea" style="display:none;">
@@ -97,8 +152,10 @@
       <div class="toolbar">
         <input type="text" id="searchInput" placeholder="Search comments or authors…" />
         <div class="exportrow" style="margin:0;">
-          <button class="ghost" id="exportCsv">Export CSV</button>
-          <button class="ghost" id="exportJson">Export JSON</button>
+          <button class="ghost" id="exportCsv">CSV</button>
+          <button class="ghost" id="exportJson">JSON</button>
+          <button class="ghost" id="exportXlsx">Excel</button>
+          <button class="ghost" id="saveRunBtn">Save run</button>
         </div>
       </div>
       <table>
@@ -109,7 +166,7 @@
     </div>
   </div>
 
-  <div class="empty" id="emptyState">No data yet — enter a channel and API key above, then fetch.</div>
+  <div class="empty" id="emptyState">No data yet — enter a channel, playlist, or video above, then fetch.</div>
 </div>
 
 <script>
@@ -117,9 +174,123 @@ let allComments = [];
 let videoStats = [];
 let filtered = [];
 let renderCount = 100;
+let currentSource = null;
 const PAGE_SIZE = 100;
+const MAX_RUNS = 10;
 
 const $ = (id) => document.getElementById(id);
+
+/* ---------------------------------------------------------------
+   Storage. Two layers, both async so a remote backend (Supabase)
+   can be dropped in later without touching call sites.
+   --------------------------------------------------------------- */
+
+const Settings = {
+  async get(key) { try { return localStorage.getItem(key); } catch (e) { return null; } },
+  async set(key, val) { try { localStorage.setItem(key, val); } catch (e) {} }
+};
+
+const RunStore = {
+  _db: null,
+  async _open() {
+    if (this._db) return this._db;
+    this._db = await new Promise((resolve, reject) => {
+      const req = indexedDB.open('ytcd', 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains('runs')) {
+          db.createObjectStore('runs', { keyPath: 'id' }).createIndex('createdAt', 'createdAt');
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return this._db;
+  },
+  async _tx(mode, fn) {
+    const db = await this._open();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('runs', mode);
+      const out = fn(tx.objectStore('runs'));
+      tx.oncomplete = () => resolve(out.result !== undefined ? out.result : out);
+      tx.onerror = () => reject(tx.error);
+    });
+  },
+  async list() {
+    const all = await this._tx('readonly', (s) => s.getAll());
+    // Metadata only — never hydrate every comment array just to draw a list.
+    return (all || [])
+      .map(({ comments, ...meta }) => meta)
+      .sort((a, b) => b.createdAt - a.createdAt);
+  },
+  async get(id) { return this._tx('readonly', (s) => s.get(id)); },
+  async save(run) {
+    await this._tx('readwrite', (s) => s.put(run));
+    const metas = await this.list();
+    for (const old of metas.slice(MAX_RUNS)) await this.remove(old.id);
+    return run.id;
+  },
+  async remove(id) { return this._tx('readwrite', (s) => s.delete(id)); },
+  async rename(id, name) {
+    const run = await this.get(id);
+    if (!run) return;
+    run.name = name;
+    return this._tx('readwrite', (s) => s.put(run));
+  }
+};
+
+/* ---------------------------------------------------------------
+   Input parsing — channel / playlist / video from almost any paste
+   --------------------------------------------------------------- */
+
+function parseSource(raw) {
+  const input = raw.trim();
+  if (!input) throw new Error('Enter a channel, playlist, or video.');
+
+  // Bare IDs first, before we try to read it as a URL.
+  if (/^UC[\w-]{22}$/.test(input)) return { type: 'channel', value: input, label: 'Channel ' + input };
+  if (/^PL[\w-]{16,}$|^(UU|FL|LL|OL)[\w-]{10,}$/.test(input)) return { type: 'playlist', value: input, label: 'Playlist ' + input };
+  if (/^[\w-]{11}$/.test(input)) return { type: 'video', value: input, label: 'Video ' + input };
+  if (input.startsWith('@')) return { type: 'handle', value: input.slice(1), label: input };
+
+  let url;
+  try {
+    url = new URL(/^https?:\/\//i.test(input) ? input : 'https://' + input);
+  } catch (e) {
+    return { type: 'search', value: input, label: input };
+  }
+
+  const host = url.hostname.replace(/^www\.|^m\./, '');
+  if (!/(^|\.)(youtube\.com|youtube-nocookie\.com|youtu\.be)$/.test(host)) {
+    return { type: 'search', value: input, label: input };
+  }
+
+  const parts = url.pathname.split('/').filter(Boolean);
+  const list = url.searchParams.get('list');
+  const v = url.searchParams.get('v');
+
+  // youtu.be/<id>
+  if (host === 'youtu.be' && parts[0]) {
+    return list ? { type: 'playlist', value: list, label: 'Playlist ' + list }
+                : { type: 'video', value: parts[0], label: 'Video ' + parts[0] };
+  }
+  // A watch URL carrying ?list= is ambiguous; the playlist is the bigger ask, so prefer it.
+  if (list && (parts[0] === 'playlist' || v)) return { type: 'playlist', value: list, label: 'Playlist ' + list };
+  if (list) return { type: 'playlist', value: list, label: 'Playlist ' + list };
+  if (v) return { type: 'video', value: v, label: 'Video ' + v };
+  if (parts[0] === 'shorts' || parts[0] === 'embed' || parts[0] === 'live') {
+    if (parts[1]) return { type: 'video', value: parts[1], label: 'Video ' + parts[1] };
+  }
+  if (parts[0] === 'channel' && parts[1]) return { type: 'channel', value: parts[1], label: 'Channel ' + parts[1] };
+  if (parts[0] && parts[0].startsWith('@')) return { type: 'handle', value: parts[0].slice(1), label: parts[0] };
+  if ((parts[0] === 'c' || parts[0] === 'user') && parts[1]) return { type: 'search', value: parts[1], label: parts[1] };
+
+  return { type: 'search', value: input, label: input };
+}
+
+/* ---------------------------------------------------------------
+   YouTube API
+   --------------------------------------------------------------- */
 
 async function ytFetch(endpoint, params, apiKey) {
   const url = new URL('https://www.googleapis.com/youtube/v3/' + endpoint);
@@ -127,37 +298,85 @@ async function ytFetch(endpoint, params, apiKey) {
   url.searchParams.set('key', apiKey);
   const res = await fetch(url.toString());
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error?.message || 'API error');
+  if (!res.ok) {
+    const err = new Error(data.error?.message || 'API error');
+    err.reason = data.error?.errors?.[0]?.reason || '';
+    err.status = res.status;
+    throw err;
+  }
   return data;
 }
 
-async function resolveChannelId(input, apiKey) {
-  input = input.trim();
-  if (/^UC[a-zA-Z0-9_-]{22}$/.test(input)) return input;
-  const handle = input.replace(/^@/, '');
-  try {
-    const r = await ytFetch('channels', { part: 'id', forHandle: handle }, apiKey);
+function friendlyError(e) {
+  const reason = e.reason || '';
+  if (reason === 'quotaExceeded' || /quota/i.test(e.message)) {
+    return 'YouTube API quota exceeded. The daily quota resets at midnight Pacific Time. ' +
+           'Any comments already fetched are shown below and can still be saved or exported.';
+  }
+  if (reason === 'keyInvalid' || reason === 'badRequest' && /API key/i.test(e.message)) {
+    return 'That API key was rejected. Check it is a YouTube Data API v3 key and that the API is enabled on the project.';
+  }
+  if (reason === 'playlistNotFound') return 'Playlist not found, or it is private.';
+  if (reason === 'videoNotFound') return 'Video not found, or it is private.';
+  return e.message;
+}
+
+async function resolveChannelId(source, apiKey) {
+  if (source.type === 'channel') return source.value;
+  if (source.type === 'handle') {
+    const r = await ytFetch('channels', { part: 'id', forHandle: source.value }, apiKey);
     if (r.items && r.items.length) return r.items[0].id;
-  } catch (e) {}
-  const r2 = await ytFetch('search', { part: 'snippet', q: input, type: 'channel', maxResults: 1 }, apiKey);
-  if (!r2.items || !r2.items.length) throw new Error('Channel not found: ' + input);
+  }
+  // Fallback: search.list costs 100 quota units, so it is a last resort only.
+  const r2 = await ytFetch('search', { part: 'snippet', q: source.value, type: 'channel', maxResults: 1 }, apiKey);
+  if (!r2.items || !r2.items.length) throw new Error('Channel not found: ' + source.value);
   return r2.items[0].snippet.channelId;
 }
 
 async function getUploadsPlaylist(channelId, apiKey) {
   const r = await ytFetch('channels', { part: 'contentDetails', id: channelId }, apiKey);
+  if (!r.items || !r.items.length) throw new Error('Channel not found: ' + channelId);
   return r.items[0].contentDetails.relatedPlaylists.uploads;
 }
 
-async function getAllVideos(playlistId, apiKey) {
+async function getPlaylistVideos(playlistId, apiKey, onPage) {
   let videos = [];
   let pageToken = '';
   do {
     const r = await ytFetch('playlistItems', { part: 'snippet', playlistId, maxResults: 50, pageToken }, apiKey);
-    r.items.forEach(it => videos.push({ id: it.snippet.resourceId.videoId, title: it.snippet.title }));
+    (r.items || []).forEach(it => {
+      const id = it.snippet?.resourceId?.videoId;
+      const title = it.snippet?.title || '';
+      // Deleted/private entries keep a slot in the playlist but have no usable video.
+      if (id && title !== 'Deleted video' && title !== 'Private video') videos.push({ id, title });
+    });
     pageToken = r.nextPageToken || '';
+    if (onPage) onPage(videos.length);
   } while (pageToken);
   return videos;
+}
+
+async function getSingleVideo(videoId, apiKey) {
+  const r = await ytFetch('videos', { part: 'snippet', id: videoId }, apiKey);
+  if (!r.items || !r.items.length) throw new Error('Video not found: ' + videoId);
+  return [{ id: videoId, title: r.items[0].snippet.title }];
+}
+
+async function resolveVideos(source, apiKey) {
+  if (source.type === 'video') {
+    setProgress(8, 'Loading video…');
+    return getSingleVideo(source.value, apiKey);
+  }
+  if (source.type === 'playlist') {
+    setProgress(8, 'Listing playlist videos…');
+    return getPlaylistVideos(source.value, apiKey, (n) => setProgress(9, `Listing playlist videos… ${n} found`));
+  }
+  setProgress(4, 'Resolving channel…');
+  const channelId = await resolveChannelId(source, apiKey);
+  setProgress(7, 'Getting upload list…');
+  const uploads = await getUploadsPlaylist(channelId, apiKey);
+  setProgress(9, 'Listing videos…');
+  return getPlaylistVideos(uploads, apiKey, (n) => setProgress(9, `Listing videos… ${n} found`));
 }
 
 async function getCommentsForVideo(video, apiKey) {
@@ -190,9 +409,10 @@ async function getCommentsForVideo(video, apiKey) {
       pageToken = r.nextPageToken || '';
     } while (pageToken);
   } catch (e) {
-    return { comments: [], error: e.message };
+    // Comments disabled is per-video and expected; quota is fatal and must stop the run.
+    return { comments, fatal: e.reason === 'quotaExceeded', error: e };
   }
-  return { comments, error: null };
+  return { comments, fatal: false, error: null };
 }
 
 function setProgress(pct, text) {
@@ -200,52 +420,86 @@ function setProgress(pct, text) {
   $('progressLog').textContent = text;
 }
 
-async function runFetch() {
-  const channelInput = $('channelInput').value.trim();
-  const apiKey = $('apiKeyInput').value.trim();
-  if (!channelInput || !apiKey) { alert('Enter both a channel and an API key.'); return; }
+function showAlert(msg) {
+  const box = $('alertBox');
+  box.textContent = msg;
+  box.style.display = msg ? 'block' : 'none';
+}
 
-  try { await window.storage.set('yt_api_key', apiKey); } catch (e) {}
+/* ---------------------------------------------------------------
+   Fetch orchestration
+   --------------------------------------------------------------- */
+
+async function runFetch() {
+  const raw = $('sourceInput').value;
+  const apiKey = $('apiKeyInput').value.trim();
+  if (!raw.trim() || !apiKey) { showAlert('Enter both a source and an API key.'); return; }
+
+  let source;
+  try { source = parseSource(raw); }
+  catch (e) { showAlert(e.message); return; }
+
+  currentSource = source;
+  await Settings.set('yt_api_key', apiKey);
+  showAlert('');
+  $('srcBadge').style.display = 'inline-block';
+  $('srcBadge').textContent = source.type + ' → ' + source.label;
 
   $('fetchBtn').disabled = true;
   $('progressWrap').style.display = 'block';
   $('emptyState').style.display = 'none';
-  setProgress(2, 'Resolving channel…');
+  setProgress(2, 'Starting…');
+
+  allComments = [];
+  videoStats = [];
+  let stoppedEarly = null;
 
   try {
-    const channelId = await resolveChannelId(channelInput, apiKey);
-    setProgress(6, 'Getting upload list…');
-    const playlistId = await getUploadsPlaylist(channelId, apiKey);
-    setProgress(10, 'Listing videos…');
-    const videos = await getAllVideos(playlistId, apiKey);
+    const videos = await resolveVideos(source, apiKey);
+    if (!videos.length) throw new Error('No videos found for that source.');
 
-    allComments = [];
-    videoStats = [];
     let skipped = 0;
-
     for (let i = 0; i < videos.length; i++) {
       const v = videos[i];
       const pct = 10 + Math.round(((i + 1) / videos.length) * 88);
       setProgress(pct, `[${i + 1}/${videos.length}] ${v.title}`);
-      const { comments, error } = await getCommentsForVideo(v, apiKey);
-      if (error) { skipped++; videoStats.push({ title: v.title, count: 0 }); continue; }
+      const { comments, fatal, error } = await getCommentsForVideo(v, apiKey);
+
       allComments.push(...comments);
       videoStats.push({ title: v.title, count: comments.length });
+
+      if (fatal) {
+        // Keep what we have rather than throwing the whole run away.
+        stoppedEarly = `Stopped at video ${i + 1} of ${videos.length}. ${friendlyError(error)}`;
+        break;
+      }
+      if (error) skipped++;
       await new Promise(r => setTimeout(r, 60));
     }
 
-    setProgress(100, `Done. ${allComments.length} comments from ${videos.length} videos (${skipped} skipped — comments off).`);
+    if (stoppedEarly) {
+      setProgress(100, `Partial: ${allComments.length} comments before stopping.`);
+      showAlert(stoppedEarly);
+    } else {
+      setProgress(100, `Done. ${allComments.length} comments from ${videoStats.length} videos (${skipped} skipped — comments off).`);
+    }
     renderResults();
   } catch (e) {
-    setProgress(0, 'Error: ' + e.message);
-    alert('Fetch failed: ' + e.message);
+    setProgress(0, 'Error');
+    showAlert(friendlyError(e));
+    if (allComments.length) renderResults();
   } finally {
     $('fetchBtn').disabled = false;
   }
 }
 
+/* ---------------------------------------------------------------
+   Rendering
+   --------------------------------------------------------------- */
+
 function renderResults() {
   $('resultsArea').style.display = 'block';
+  $('emptyState').style.display = 'none';
   const totalVideos = videoStats.length;
   const totalComments = allComments.length;
   const avg = totalVideos ? Math.round(totalComments / totalVideos) : 0;
@@ -255,69 +509,140 @@ function renderResults() {
     <div class="stat"><div class="n">${totalVideos}</div><div class="l">Videos</div></div>
     <div class="stat"><div class="n">${totalComments.toLocaleString()}</div><div class="l">Comments + replies</div></div>
     <div class="stat"><div class="n">${avg}</div><div class="l">Avg per video</div></div>
-    <div class="stat"><div class="n">${top ? top.count : 0}</div><div class="l">Top video: ${top ? escapeHtml(truncate(top.title, 28)) : '—'}</div></div>
+    <div class="stat"><div class="n">${top ? top.count : 0}</div><div class="l">Top: ${top ? escapeHtml(truncate(top.title, 28)) : '—'}</div></div>
   `;
 
   renderChart();
   filtered = allComments;
   renderCount = PAGE_SIZE;
+  $('searchInput').value = '';
   renderTable();
 }
 
 let chartInstance;
 function renderChart() {
   const top10 = [...videoStats].sort((a, b) => b.count - a.count).slice(0, 10);
-  const ctx = $('topChart');
+  const css = getComputedStyle(document.documentElement);
+  const accent = css.getPropertyValue('--accent').trim() || '#2f5233';
+  const grid = css.getPropertyValue('--border').trim();
+  const label = css.getPropertyValue('--text-sec').trim();
   if (chartInstance) chartInstance.destroy();
-  chartInstance = new Chart(ctx, {
+  chartInstance = new Chart($('topChart'), {
     type: 'bar',
     data: {
       labels: top10.map(v => truncate(v.title, 30)),
-      datasets: [{ label: 'Comments', data: top10.map(v => v.count), backgroundColor: '#2a78d6', borderRadius: 4 }]
+      datasets: [{ label: 'Comments', data: top10.map(v => v.count), backgroundColor: accent, borderRadius: 4 }]
     },
     options: {
       indexAxis: 'y', responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false } },
-      scales: { x: { beginAtZero: true, ticks: { precision: 0 } } }
+      scales: {
+        x: { beginAtZero: true, ticks: { precision: 0, color: label }, grid: { color: grid } },
+        y: { ticks: { color: label }, grid: { display: false } }
+      }
     }
   });
 }
 
-function truncate(s, n) { return s.length > n ? s.slice(0, n - 1) + '…' : s; }
-function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function truncate(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+function escapeHtml(s) { return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 function renderTable() {
-  const body = $('tableBody');
   const slice = filtered.slice(0, renderCount);
-  body.innerHTML = slice.map(c => `
+  $('tableBody').innerHTML = slice.map(c => `
     <tr>
-      <td class="comment-text">${escapeHtml(truncate(c.text, 180))}${c.is_reply ? ' <span class="pill">reply</span>' : ''}</td>
-      <td>${escapeHtml(c.author)}</td>
-      <td class="video-title">${escapeHtml(truncate(c.video_title, 40))}</td>
-      <td>${c.likes}</td>
-      <td>${c.date ? new Date(c.date).toLocaleDateString() : ''}</td>
+      <td class="comment-text" data-label="Comment">${escapeHtml(truncate(c.text, 180))}${c.is_reply ? ' <span class="pill">reply</span>' : ''}</td>
+      <td data-label="Author">${escapeHtml(c.author)}</td>
+      <td class="video-title" data-label="Video">${escapeHtml(truncate(c.video_title, 40))}</td>
+      <td data-label="Likes">${c.likes}</td>
+      <td data-label="Date">${c.date ? new Date(c.date).toLocaleDateString() : ''}</td>
     </tr>
   `).join('');
   $('loadMoreBtn').style.display = filtered.length > renderCount ? 'block' : 'none';
 }
 
-$('searchInput').addEventListener('input', (e) => {
-  const q = e.target.value.toLowerCase();
-  filtered = !q ? allComments : allComments.filter(c =>
-    c.text.toLowerCase().includes(q) || c.author.toLowerCase().includes(q));
-  renderCount = PAGE_SIZE;
-  renderTable();
+/* ---------------------------------------------------------------
+   Saved runs
+   --------------------------------------------------------------- */
+
+async function saveCurrentRun() {
+  if (!allComments.length) { showAlert('Nothing to save yet.'); return; }
+  const suggested = currentSource ? currentSource.label : 'Run';
+  const name = prompt('Name this run:', suggested);
+  if (name === null) return;
+  const run = {
+    id: 'run_' + Date.now(),
+    name: name.trim() || suggested,
+    sourceType: currentSource ? currentSource.type : 'unknown',
+    sourceLabel: currentSource ? currentSource.label : '',
+    createdAt: Date.now(),
+    totalComments: allComments.length,
+    totalVideos: videoStats.length,
+    videoStats, comments: allComments
+  };
+  try {
+    await RunStore.save(run);
+    await renderRuns();
+    showAlert('');
+  } catch (e) {
+    showAlert('Could not save run: ' + e.message);
+  }
+}
+
+async function loadRun(id) {
+  const run = await RunStore.get(id);
+  if (!run) return;
+  allComments = run.comments || [];
+  videoStats = run.videoStats || [];
+  currentSource = { type: run.sourceType, value: '', label: run.sourceLabel };
+  $('srcBadge').style.display = 'inline-block';
+  $('srcBadge').textContent = `saved run → ${run.name}`;
+  showAlert('');
+  renderResults();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function renderRuns() {
+  const runs = await RunStore.list();
+  $('runsCard').style.display = runs.length ? 'block' : 'none';
+  $('runsList').innerHTML = runs.map(r => `
+    <li>
+      <div class="run-meta">
+        <div class="run-name">${escapeHtml(r.name)}</div>
+        <div class="run-sub">${r.totalComments.toLocaleString()} comments · ${r.totalVideos} videos · ${new Date(r.createdAt).toLocaleString()}</div>
+      </div>
+      <button class="tiny" data-load="${r.id}">Open</button>
+      <button class="tiny ghost" data-rename="${r.id}">Rename</button>
+      <button class="tiny ghost" data-del="${r.id}">Delete</button>
+    </li>
+  `).join('');
+}
+
+$('runsList').addEventListener('click', async (e) => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  if (btn.dataset.load) return loadRun(btn.dataset.load);
+  if (btn.dataset.del) {
+    if (confirm('Delete this saved run?')) { await RunStore.remove(btn.dataset.del); await renderRuns(); }
+    return;
+  }
+  if (btn.dataset.rename) {
+    const run = await RunStore.get(btn.dataset.rename);
+    const name = prompt('Rename run:', run ? run.name : '');
+    if (name && name.trim()) { await RunStore.rename(btn.dataset.rename, name.trim()); await renderRuns(); }
+  }
 });
 
-$('loadMoreBtn').addEventListener('click', () => { renderCount += PAGE_SIZE; renderTable(); });
-$('fetchBtn').addEventListener('click', runFetch);
+/* ---------------------------------------------------------------
+   Export
+   --------------------------------------------------------------- */
+
+const EXPORT_COLS = ['video_id','video_title','author','comment_text','date','likes','reply_count','is_reply'];
+const toRow = (c) => [c.video_id, c.video_title, c.author, c.text, c.date, c.likes, c.replies, c.is_reply];
 
 function toCsv(rows) {
-  const headers = ['video_id','video_title','author','comment_text','date','likes','reply_count','is_reply'];
-  const esc = (v) => `"${String(v).replace(/"/g, '""')}"`;
-  const lines = [headers.join(',')];
-  rows.forEach(c => lines.push([c.video_id, c.video_title, c.author, c.text, c.date, c.likes, c.replies, c.is_reply].map(esc).join(',')));
-  return lines.join('\n');
+  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  return [EXPORT_COLS.join(',')].concat(rows.map(c => toRow(c).map(esc).join(','))).join('\n');
 }
 
 function download(filename, content, type) {
@@ -329,14 +654,57 @@ function download(filename, content, type) {
   URL.revokeObjectURL(url);
 }
 
-$('exportCsv').addEventListener('click', () => download('youtube_comments.csv', toCsv(filtered), 'text/csv'));
+function exportXlsx(rows) {
+  const ws = XLSX.utils.aoa_to_sheet([EXPORT_COLS].concat(rows.map(toRow)));
+  ws['!cols'] = [{ wch: 13 }, { wch: 42 }, { wch: 22 }, { wch: 70 }, { wch: 20 }, { wch: 7 }, { wch: 8 }, { wch: 8 }];
+  ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { c: 0, r: 0 }, e: { c: EXPORT_COLS.length - 1, r: rows.length } }) };
+  ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Comments');
+  XLSX.writeFile(wb, 'youtube_comments.xlsx');
+}
+
+$('exportCsv').addEventListener('click', () => download('youtube_comments.csv', toCsv(filtered), 'text/csv;charset=utf-8'));
 $('exportJson').addEventListener('click', () => download('youtube_comments.json', JSON.stringify(filtered, null, 2), 'application/json'));
+$('exportXlsx').addEventListener('click', () => exportXlsx(filtered));
+$('saveRunBtn').addEventListener('click', saveCurrentRun);
+
+/* ---------------------------------------------------------------
+   Table interaction + theme
+   --------------------------------------------------------------- */
+
+$('searchInput').addEventListener('input', (e) => {
+  const q = e.target.value.toLowerCase();
+  filtered = !q ? allComments : allComments.filter(c =>
+    c.text.toLowerCase().includes(q) || c.author.toLowerCase().includes(q));
+  renderCount = PAGE_SIZE;
+  renderTable();
+});
+$('loadMoreBtn').addEventListener('click', () => { renderCount += PAGE_SIZE; renderTable(); });
+$('fetchBtn').addEventListener('click', runFetch);
+$('sourceInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') runFetch(); });
+$('apiKeyInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') runFetch(); });
+
+function applyTheme(mode) {
+  if (mode === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', mode);
+  document.querySelectorAll('[data-theme-set]').forEach(b =>
+    b.setAttribute('aria-pressed', String(b.dataset.themeSet === mode)));
+  if (chartInstance) renderChart();
+}
+
+document.querySelectorAll('[data-theme-set]').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    applyTheme(btn.dataset.themeSet);
+    await Settings.set('yt_theme', btn.dataset.themeSet);
+  });
+});
 
 (async function init() {
-  try {
-    const saved = await window.storage.get('yt_api_key');
-    if (saved && saved.value) $('apiKeyInput').value = saved.value;
-  } catch (e) {}
+  applyTheme((await Settings.get('yt_theme')) || 'auto');
+  const savedKey = await Settings.get('yt_api_key');
+  if (savedKey) $('apiKeyInput').value = savedKey;
+  try { await renderRuns(); } catch (e) { /* IndexedDB blocked (e.g. private mode) */ }
 })();
 </script>
 </body>
