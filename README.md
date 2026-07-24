@@ -131,6 +131,21 @@ and Excel exports.
 The prompt is written for **Hindi, English, and mixed Hinglish** comments, since
 that's what an Indian farming channel actually gets.
 
+### The brief
+
+Once comments are analysed, **Write a brief** produces a short Markdown report:
+a summary, the specific leads worth following up (with the commenter's name and
+the useful fragment quoted), complaints grouped by what actually went wrong,
+recurring questions, and three to five concrete next steps. There's a Copy button
+for pasting it into email or WhatsApp.
+
+The prompt sends counts and themes for the whole set, plus up to 30 quoted
+examples per category chosen **most-liked first** — so if the sample has to be
+trimmed, what survives is what the audience actually engaged with. It is
+instructed never to reproduce phone numbers, only to flag that a comment contains
+one. Model output is HTML-escaped before rendering, so nothing it returns can
+inject markup into the page.
+
 ### Choosing a model
 
 A dropdown lists models **best first**, in three groups:
@@ -188,7 +203,7 @@ Both `runs` and `comments` are protected by RLS: every policy filters on
 
 Still to build:
 
-- Scheduled/automatic pulls (cron → database, no one at the keyboard)
+- Scheduled/automatic pulls (cron → database, no one at the keyboard), which
+  would also run the brief on a cadence and email it
 - Google Sheets direct export
-- Periodic digest summarising new leads and complaints since the last run
 - Instagram/Facebook comment extraction via the Meta Graph API

@@ -93,6 +93,13 @@
   .modelrow{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-top:14px;}
   select{width:100%;padding:10px 12px;border:1px solid var(--border-strong);border-radius:8px;background:var(--card);color:var(--text);font-size:13px;font-family:var(--mono);}
   select:focus{outline:2px solid var(--accent);outline-offset:1px;}
+  .digest{border:1px solid var(--border);border-radius:10px;padding:4px 18px 14px;margin-top:16px;background:var(--bg);}
+  .digest h3{font-family:var(--serif);font-size:15px;font-weight:600;margin:16px 0 6px;color:var(--accent);}
+  .digest p{font-size:13.5px;line-height:1.65;margin:0 0 10px;color:var(--text);}
+  .digest ul{margin:0 0 10px;padding-left:20px;}
+  .digest li{font-size:13.5px;line-height:1.6;margin-bottom:5px;}
+  .digest strong{font-weight:600;}
+  .digestbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px;}
   .chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;}
   .chip{border:1px solid var(--border-strong);border-radius:20px;padding:5px 12px;font-size:12px;cursor:pointer;background:transparent;color:var(--text-sec);font-family:var(--sans);font-weight:500;}
   .chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);}
@@ -222,6 +229,12 @@
           <div class="themes" id="themeList"></div>
         </div>
         <p class="hint" id="analysisMeta"></p>
+        <div class="digestbar">
+          <button class="ghost" id="digestBtn">Write a brief</button>
+          <button class="ghost tiny" id="copyDigestBtn" style="display:none;">Copy</button>
+          <span class="hint" id="digestMeta" style="margin:0;"></span>
+        </div>
+        <div class="digest" id="digestBox" style="display:none;"></div>
       </div>
     </div>
 
@@ -653,6 +666,9 @@ async function runFetch() {
   currentRunId = null;
   catFilter = null;
   analysisStats = null;
+  lastDigest = '';
+  $('digestBox').style.display = 'none';
+  $('digestMeta').textContent = '';
   let stoppedEarly = null;
 
   try {
@@ -801,6 +817,9 @@ async function loadRun(id) {
   currentRunId = session ? id : null;
   catFilter = null;
   analysisStats = null;
+  lastDigest = '';
+  $('digestBox').style.display = 'none';
+  $('digestMeta').textContent = '';
   currentSource = { type: run.sourceType, value: '', label: run.sourceLabel };
   $('srcBadge').style.display = 'inline-block';
   $('srcBadge').textContent = `saved run → ${run.name}`;
@@ -1065,6 +1084,7 @@ function renderAnalysis() {
   }
   $('analysisBody').style.display = 'block';
   $('analysisEmpty').style.display = analysed.length < allComments.length ? 'block' : 'none';
+  if (!lastDigest) { $('digestBox').style.display = 'none'; $('copyDigestBtn').style.display = 'none'; }
 
   const n = analysed.length;
   const by = (k) => analysed.filter(c => c.sentiment === k).length;
@@ -1104,6 +1124,88 @@ function renderAnalysis() {
   if (analysisStats?.provider === 'openrouter') bits.push('via OpenRouter');
   $('analysisMeta').textContent = bits.join(' · ');
 }
+
+/* Deliberately tiny Markdown subset - headings, lists, bold, paragraphs.
+   Everything is HTML-escaped first, so model output can never inject markup. */
+function renderMarkdown(md) {
+  const lines = escapeHtml(md).split('\n');
+  const html = [];
+  let inList = false;
+  const closeList = () => { if (inList) { html.push('</ul>'); inList = false; } };
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) { closeList(); continue; }
+    if (/^#{1,6}\s/.test(line)) {
+      closeList();
+      html.push('<h3>' + line.replace(/^#{1,6}\s*/, '') + '</h3>');
+    } else if (/^[-*]\s/.test(line)) {
+      if (!inList) { html.push('<ul>'); inList = true; }
+      html.push('<li>' + line.replace(/^[-*]\s*/, '') + '</li>');
+    } else {
+      closeList();
+      html.push('<p>' + line + '</p>');
+    }
+  }
+  closeList();
+  return html.join('').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+}
+
+let lastDigest = '';
+
+async function runDigest() {
+  if (!session) { showAlert('Sign in first — the brief is written on the server.'); return; }
+  const analysed = allComments.filter(c => c.sentiment);
+  if (!analysed.length) { showAlert('Analyse the comments first.'); return; }
+
+  const [provider, modelId] = ($('modelSelect').value || 'anthropic::').split('::');
+  $('digestBtn').disabled = true;
+  $('digestMeta').textContent = 'Writing…';
+  showAlert('');
+
+  try {
+    const res = await fetch(SUPABASE_URL + '/functions/v1/digest', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + session.access_token
+      },
+      body: JSON.stringify({
+        // Only the fields the brief needs — no video ids or timestamps.
+        comments: analysed.map(c => ({
+          author: c.author, text: c.text, likes: c.likes,
+          sentiment: c.sentiment, category: c.category, theme: c.theme
+        })),
+        label: currentSource ? currentSource.label : 'this run',
+        provider, model: modelId
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error?.message || 'Could not write the brief.');
+
+    lastDigest = data.digest || '';
+    $('digestBox').innerHTML = renderMarkdown(lastDigest);
+    $('digestBox').style.display = 'block';
+    $('copyDigestBtn').style.display = 'inline-block';
+    $('digestMeta').textContent =
+      `From ${data.based_on} comments · ${data.model}` +
+      (data.cost_usd ? ` · ≈ $${data.cost_usd.toFixed(4)}` : '');
+  } catch (e) {
+    $('digestMeta').textContent = '';
+    showAlert('Brief failed: ' + (e.message || e));
+  } finally {
+    $('digestBtn').disabled = false;
+  }
+}
+
+$('digestBtn').addEventListener('click', runDigest);
+$('copyDigestBtn').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(lastDigest);
+    $('copyDigestBtn').textContent = 'Copied';
+    setTimeout(() => { $('copyDigestBtn').textContent = 'Copy'; }, 1500);
+  } catch (e) { showAlert('Could not copy: ' + (e.message || e)); }
+});
 
 $('catChips').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-cat]');
