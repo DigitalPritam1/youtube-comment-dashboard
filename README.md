@@ -44,7 +44,10 @@ an older thread** is not picked up. Re-fetch the source from the top when that
 matters.
 
 **Export** — CSV, JSON, and Excel (`.xlsx`, with column widths, a frozen header
-row, and autofilter).
+row, and autofilter). Files are named after the source — the video's own title
+for a single video, otherwise the channel or playlist name (e.g.
+`IndianFarmerOfficial_comments.csv`). Non-Latin titles are kept intact, so a
+Marathi video exports as `खरीप_पीक_विमा…_comments.csv`.
 
 **Resilience** — a video with comments disabled is skipped and counted. If the
 API quota runs out mid-run, the fetch stops but *keeps everything already

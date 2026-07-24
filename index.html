@@ -1411,6 +1411,32 @@ function toCsv(rows) {
   return [EXPORT_COLS.join(',')].concat(rows.map(c => toRow(c).map(esc).join(','))).join('\n');
 }
 
+/* A readable export name from the source: the video's own title for a single
+   video, otherwise the channel/playlist name. Keeps Devanagari and other
+   non-Latin scripts intact (\p{L}\p{N} rather than \w, which is ASCII-only),
+   collapses runs of other characters to underscores, and caps the length so a
+   long Marathi title doesn't produce an unwieldy filename. */
+function exportBasename() {
+  let name = '';
+  const videoIds = new Set(filtered.map(c => c.video_id));
+  if (videoIds.size === 1 && filtered[0] && filtered[0].video_title) {
+    name = filtered[0].video_title;                 // single video → its title
+  } else if (currentSource) {
+    name = (currentSource.label || '')
+      .replace(/^(Channel|Playlist|Video)\s+/i, '')  // drop the type prefix
+      .replace(/^@/, '');
+  }
+  let slug = name.normalize('NFC')
+    .replace(/[\\/:*?"<>|]+/g, ' ')                  // characters illegal in filenames
+    // Keep letters, numbers, AND combining marks — Devanagari vowel signs
+    // (matras) are Marks, so dropping them would shatter every word.
+    .replace(/[^\p{L}\p{N}\p{M}]+/gu, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 60)
+    .replace(/_+$/g, '');
+  return (slug || 'youtube') + '_comments';
+}
+
 function download(filename, content, type) {
   const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
@@ -1427,11 +1453,11 @@ function exportXlsx(rows) {
   ws['!freeze'] = { xSplit: 0, ySplit: 1 };
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Comments');
-  XLSX.writeFile(wb, 'youtube_comments.xlsx');
+  XLSX.writeFile(wb, exportBasename() + '.xlsx');
 }
 
-$('exportCsv').addEventListener('click', () => download('youtube_comments.csv', toCsv(filtered), 'text/csv;charset=utf-8'));
-$('exportJson').addEventListener('click', () => download('youtube_comments.json', JSON.stringify(filtered, null, 2), 'application/json'));
+$('exportCsv').addEventListener('click', () => download(exportBasename() + '.csv', toCsv(filtered), 'text/csv;charset=utf-8'));
+$('exportJson').addEventListener('click', () => download(exportBasename() + '.json', JSON.stringify(filtered, null, 2), 'application/json'));
 $('exportXlsx').addEventListener('click', () => exportXlsx(filtered));
 $('saveRunBtn').addEventListener('click', saveCurrentRun);
 
