@@ -78,6 +78,8 @@
   .runs{list-style:none;margin:0;padding:0;}
   .runs li{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;}
   .runs li:last-child{border-bottom:none;}
+  .nightly{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;color:var(--text-mut);text-transform:none;letter-spacing:0;font-weight:400;}
+  .nightly input{width:auto;}
   .run-meta{flex:1;min-width:180px;}
   .run-name{font-size:14px;font-weight:600;}
   .run-sub{font-size:12px;color:var(--text-mut);font-family:var(--mono);margin-top:2px;}
@@ -195,7 +197,8 @@
     <h2>Saved runs</h2>
     <ul class="runs" id="runsList"></ul>
     <p class="hint" id="runsHint">Stored in this browser (IndexedDB). The 10 most recent runs are kept.</p>
-    <p class="hint" style="margin-top:4px;">Refresh fetches only comments newer than the run's newest, which
+    <p class="hint" style="margin-top:4px;">Tick <em>refresh nightly</em> on a cloud run and the server pulls new
+    comments for it every night at 02:30 IST, no browser needed. Refresh fetches only comments newer than the run's newest, which
     costs far less quota than a fresh pull. New <em>replies</em> on older threads are not picked up — re-fetch
     the source from the top for those.</p>
     <button class="ghost tiny" id="uploadLocalBtn" style="display:none;">Upload this device's runs to the cloud</button>
@@ -369,14 +372,16 @@ const CloudRunStore = {
   },
   async list() {
     const { data, error } = await sb.from('runs')
-      .select('id,name,source_type,source_value,source_label,total_videos,total_comments,created_at')
+      .select('id,name,source_type,source_value,source_label,total_videos,total_comments,created_at,auto_refresh,last_refreshed_at')
       .order('created_at', { ascending: false });
     if (error) throw error;
     return (data || []).map(r => ({
       id: r.id, name: r.name, sourceType: r.source_type,
       sourceValue: r.source_value || '', sourceLabel: r.source_label,
       totalVideos: r.total_videos, totalComments: r.total_comments,
-      createdAt: new Date(r.created_at).getTime()
+      createdAt: new Date(r.created_at).getTime(),
+      autoRefresh: !!r.auto_refresh,
+      lastRefreshedAt: r.last_refreshed_at ? new Date(r.last_refreshed_at).getTime() : null
     }));
   },
   async get(id) {
@@ -444,6 +449,10 @@ const CloudRunStore = {
       newest_comment_at: fresh.reduce((m, c) => (c.date && c.date > m ? c.date : m), ''),
     }).eq('id', runId);
     if (uErr) throw uErr;
+  },
+  async setAutoRefresh(id, on) {
+    const { error } = await sb.from('runs').update({ auto_refresh: on }).eq('id', id);
+    if (error) throw error;
   },
   async remove(id) {
     const { error } = await sb.from('runs').delete().eq('id', id); // comments cascade
@@ -998,6 +1007,8 @@ async function renderRuns() {
       <div class="run-meta">
         <div class="run-name">${escapeHtml(r.name)}</div>
         <div class="run-sub">${r.totalComments.toLocaleString()} comments · ${r.totalVideos} videos · ${new Date(r.createdAt).toLocaleString()}</div>
+        ${session ? `<label class="nightly"><input type="checkbox" data-auto="${r.id}" ${r.autoRefresh ? 'checked' : ''}> refresh nightly${
+          r.lastRefreshedAt ? ` · last ran ${new Date(r.lastRefreshedAt).toLocaleDateString()}` : ''}</label>` : ''}
       </div>
       <button class="tiny" data-load="${r.id}">Open</button>
       <button class="tiny ghost" data-refresh="${r.id}">Refresh</button>
@@ -1011,6 +1022,7 @@ $('runsList').addEventListener('click', async (e) => {
   const btn = e.target.closest('button');
   if (!btn) return;
   if (btn.dataset.load) return loadRun(btn.dataset.load);
+  if (btn.dataset.auto !== undefined) return;   // checkbox handled separately
   if (btn.dataset.refresh) {
     btn.disabled = true;
     try { await refreshRun(btn.dataset.refresh); } finally { btn.disabled = false; }
@@ -1029,6 +1041,20 @@ $('runsList').addEventListener('click', async (e) => {
 
 // One-way copy: local runs are left in place so nothing is lost if the upload
 // half-fails or the user signs into the wrong account.
+$('runsList').addEventListener('change', async (e) => {
+  const box = e.target.closest('input[data-auto]');
+  if (!box) return;
+  try {
+    await CloudRunStore.setAutoRefresh(box.dataset.auto, box.checked);
+    showAlert(box.checked
+      ? 'This run will refresh itself nightly (02:30 IST).'
+      : 'Nightly refresh turned off for this run.');
+  } catch (err) {
+    box.checked = !box.checked;
+    showAlert('Could not change the schedule: ' + (err.message || err));
+  }
+});
+
 $('uploadLocalBtn').addEventListener('click', async () => {
   if (!session) return;
   const metas = await LocalRunStore.list();

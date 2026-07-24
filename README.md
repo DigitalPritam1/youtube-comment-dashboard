@@ -124,6 +124,46 @@ insert into public.allowed_emails (email, note) values ('teammate@example.com', 
 messages per hour — fine for one person, not for a team. Configure custom SMTP
 under *Authentication → Emails* before more than one or two people rely on it.
 
+## Scheduled refresh (nightly)
+
+Tick **refresh nightly** on a cloud run and the server pulls new comments for it
+every night at **02:30 IST (21:00 UTC)** — no browser open, no one at the keyboard.
+It reuses the same incremental cutoff, so a nightly run costs about one quota unit
+per video.
+
+Pieces: `pg_cron` fires `pg_net`, which POSTs to the `scheduled-refresh` edge
+function. That function authenticates by comparing the bearer token against its own
+`SUPABASE_SERVICE_ROLE_KEY` — so there is **no extra secret to invent**; the cron job
+reads the same key out of Supabase Vault at fire time rather than storing it in the
+job body. Every attempt writes a row to `refresh_log` (new comment count, status,
+error detail), so a silent 2am failure is visible the next morning.
+
+Comments are inserted with `upsert ... ignoreDuplicates` against the
+`(run_id, comment_id)` unique index, so a re-run can never double-insert. The
+function has a 100-second budget and records a `partial` status if it runs out of
+time or hits the YouTube quota, rather than being killed mid-insert.
+
+### One-time setup for the schedule
+
+The cron job is already scheduled, but it needs the service-role key in Vault
+before it can authenticate. Run this **once** in the Supabase SQL editor, pasting
+your own service-role key (Project Settings → API):
+
+```sql
+select vault.create_secret('<your-service-role-key>', 'service_role_key');
+```
+
+Until that exists the nightly job runs and fails harmlessly. Check on it with:
+
+```sql
+select * from cron.job_run_details order by start_time desc limit 5;
+select * from public.refresh_log order by ran_at desc limit 20;
+```
+
+Analysis is **not** run automatically — new comments arrive tagged as unanalysed
+and you classify them on the next visit. Auto-analysis and emailing the brief are
+the natural next step.
+
 ## Comment analysis
 
 Signed-in users can run a **model pass** over the extracted comments — Claude by
@@ -215,7 +255,7 @@ Both `runs` and `comments` are protected by RLS: every policy filters on
 
 Still to build:
 
-- Scheduled/automatic pulls (cron → database, no one at the keyboard), which
-  would also run the brief on a cadence and email it
+- Auto-analysis of nightly-arrived comments, and emailing the brief (needs an
+  email provider key such as Resend)
 - Google Sheets direct export
 - Instagram/Facebook comment extraction via the Meta Graph API
