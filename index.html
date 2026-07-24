@@ -195,6 +195,9 @@
     <h2>Saved runs</h2>
     <ul class="runs" id="runsList"></ul>
     <p class="hint" id="runsHint">Stored in this browser (IndexedDB). The 10 most recent runs are kept.</p>
+    <p class="hint" style="margin-top:4px;">Refresh fetches only comments newer than the run's newest, which
+    costs far less quota than a fresh pull. New <em>replies</em> on older threads are not picked up — re-fetch
+    the source from the top for those.</p>
     <button class="ghost tiny" id="uploadLocalBtn" style="display:none;">Upload this device's runs to the cloud</button>
   </div>
 
@@ -347,6 +350,7 @@ const CloudRunStore = {
   _toDb(c, runId, userId) {
     return {
       run_id: runId, user_id: userId,
+      comment_id: c.comment_id || null,
       video_id: c.video_id, video_title: c.video_title,
       author: c.author, text: c.text,
       published_at: c.date || null,
@@ -356,6 +360,7 @@ const CloudRunStore = {
   },
   _fromDb(r) {
     return {
+      comment_id: r.comment_id || undefined,
       video_id: r.video_id, video_title: r.video_title,
       author: r.author, text: r.text, date: r.published_at,
       likes: r.likes, replies: r.reply_count, is_reply: r.is_reply,
@@ -364,11 +369,12 @@ const CloudRunStore = {
   },
   async list() {
     const { data, error } = await sb.from('runs')
-      .select('id,name,source_type,source_label,total_videos,total_comments,created_at')
+      .select('id,name,source_type,source_value,source_label,total_videos,total_comments,created_at')
       .order('created_at', { ascending: false });
     if (error) throw error;
     return (data || []).map(r => ({
-      id: r.id, name: r.name, sourceType: r.source_type, sourceLabel: r.source_label,
+      id: r.id, name: r.name, sourceType: r.source_type,
+      sourceValue: r.source_value || '', sourceLabel: r.source_label,
       totalVideos: r.total_videos, totalComments: r.total_comments,
       createdAt: new Date(r.created_at).getTime()
     }));
@@ -387,7 +393,8 @@ const CloudRunStore = {
       if (!data || data.length < PAGE) break;
     }
     return {
-      id: run.id, name: run.name, sourceType: run.source_type, sourceLabel: run.source_label,
+      id: run.id, name: run.name, sourceType: run.source_type,
+      sourceValue: run.source_value || '', sourceLabel: run.source_label,
       createdAt: new Date(run.created_at).getTime(),
       totalComments: run.total_comments, totalVideos: run.total_videos,
       videoStats: run.video_stats || [], comments
@@ -397,7 +404,8 @@ const CloudRunStore = {
     const userId = session.user.id;
     const { data, error } = await sb.from('runs').insert({
       user_id: userId, name: run.name,
-      source_type: run.sourceType, source_label: run.sourceLabel,
+      source_type: run.sourceType, source_value: run.sourceValue || null,
+      source_label: run.sourceLabel,
       total_videos: run.totalVideos, total_comments: run.totalComments,
       video_stats: run.videoStats
     }).select('id').single();
@@ -418,6 +426,24 @@ const CloudRunStore = {
       }
     }
     return runId;
+  },
+  /* Refresh only ever adds comments, so insert the new rows and update the
+     run's totals rather than rewriting every row. */
+  async appendComments(runId, fresh, videoStats, total) {
+    const userId = session.user.id;
+    const CHUNK = 500;
+    for (let i = 0; i < fresh.length; i += CHUNK) {
+      const rows = fresh.slice(i, i + CHUNK).map(c => this._toDb(c, runId, userId));
+      const { error } = await sb.from('comments').insert(rows);
+      if (error) throw error;
+    }
+    const { error: uErr } = await sb.from('runs').update({
+      total_comments: total,
+      total_videos: videoStats.length,
+      video_stats: videoStats,
+      newest_comment_at: fresh.reduce((m, c) => (c.date && c.date > m ? c.date : m), ''),
+    }).eq('id', runId);
+    if (uErr) throw uErr;
   },
   async remove(id) {
     const { error } = await sb.from('runs').delete().eq('id', id); // comments cascade
@@ -588,18 +614,29 @@ async function resolveVideos(source) {
   return getPlaylistVideos(uploads, (n) => setProgress(9, `Listing videos… ${n} found`));
 }
 
-async function getCommentsForVideo(video) {
+/* `since` (an ISO date) makes this incremental: results come newest-first, so
+   once a thread older than the cutoff appears there is nothing newer left on
+   this video and we stop paging. On a refresh that usually costs 1 quota unit
+   per video instead of one per 100 comments. */
+async function getCommentsForVideo(video, since) {
   let comments = [];
   let pageToken = '';
+  const cutoff = since ? new Date(since).getTime() : null;
   try {
     do {
       const r = await ytFetch('commentThreads', {
         part: 'snippet,replies', videoId: video.id, maxResults: 100,
         order: 'time', pageToken, textFormat: 'plainText'
       });
+      let reachedOld = false;
       (r.items || []).forEach(item => {
         const top = item.snippet.topLevelComment.snippet;
+        if (cutoff !== null && new Date(top.publishedAt).getTime() <= cutoff) {
+          reachedOld = true;
+          return;
+        }
         comments.push({
+          comment_id: item.snippet.topLevelComment.id || item.id,
           video_id: video.id, video_title: video.title,
           author: top.authorDisplayName || '', text: top.textDisplay || '',
           date: top.publishedAt || '', likes: top.likeCount || 0,
@@ -608,6 +645,7 @@ async function getCommentsForVideo(video) {
         (item.replies?.comments || []).forEach(rep => {
           const rs = rep.snippet;
           comments.push({
+            comment_id: rep.id,
             video_id: video.id, video_title: video.title,
             author: rs.authorDisplayName || '', text: rs.textDisplay || '',
             date: rs.publishedAt || '', likes: rs.likeCount || 0,
@@ -615,6 +653,7 @@ async function getCommentsForVideo(video) {
           });
         });
       });
+      if (reachedOld) break;
       pageToken = r.nextPageToken || '';
     } while (pageToken);
   } catch (e) {
@@ -638,6 +677,38 @@ function showAlert(msg) {
 /* ---------------------------------------------------------------
    Fetch orchestration
    --------------------------------------------------------------- */
+
+/* Walks every video in a source and collects comments. `since` makes it
+   incremental. Shared by the first fetch and by refresh so the two can never
+   drift apart. */
+async function harvest(source, since) {
+  const videos = await resolveVideos(source);
+  if (!videos.length) throw new Error('No videos found for that source.');
+
+  const comments = [];
+  const videoStats = [];
+  let stoppedEarly = null;
+  let skipped = 0;
+
+  for (let i = 0; i < videos.length; i++) {
+    const v = videos[i];
+    const pct = 10 + Math.round(((i + 1) / videos.length) * 88);
+    setProgress(pct, `[${i + 1}/${videos.length}] ${v.title}`);
+    const r = await getCommentsForVideo(v, since);
+
+    comments.push(...r.comments);
+    videoStats.push({ title: v.title, count: r.comments.length });
+
+    if (r.fatal) {
+      // Keep what we have rather than throwing the whole run away.
+      stoppedEarly = `Stopped at video ${i + 1} of ${videos.length}. ${friendlyError(r.error)}`;
+      break;
+    }
+    if (r.error) skipped++;
+    await new Promise(res => setTimeout(res, 60));
+  }
+  return { comments, videoStats, stoppedEarly, skipped };
+}
 
 async function runFetch() {
   const raw = $('sourceInput').value;
@@ -672,27 +743,11 @@ async function runFetch() {
   let stoppedEarly = null;
 
   try {
-    const videos = await resolveVideos(source);
-    if (!videos.length) throw new Error('No videos found for that source.');
-
-    let skipped = 0;
-    for (let i = 0; i < videos.length; i++) {
-      const v = videos[i];
-      const pct = 10 + Math.round(((i + 1) / videos.length) * 88);
-      setProgress(pct, `[${i + 1}/${videos.length}] ${v.title}`);
-      const { comments, fatal, error } = await getCommentsForVideo(v);
-
-      allComments.push(...comments);
-      videoStats.push({ title: v.title, count: comments.length });
-
-      if (fatal) {
-        // Keep what we have rather than throwing the whole run away.
-        stoppedEarly = `Stopped at video ${i + 1} of ${videos.length}. ${friendlyError(error)}`;
-        break;
-      }
-      if (error) skipped++;
-      await new Promise(r => setTimeout(r, 60));
-    }
+    const h = await harvest(source, null);
+    allComments = h.comments;
+    videoStats = h.videoStats;
+    stoppedEarly = h.stoppedEarly;
+    const skipped = h.skipped;
 
     if (stoppedEarly) {
       setProgress(100, `Partial: ${allComments.length} comments before stopping.`);
@@ -790,6 +845,7 @@ async function saveCurrentRun() {
     id: 'run_' + Date.now(),
     name: name.trim() || suggested,
     sourceType: currentSource ? currentSource.type : 'unknown',
+    sourceValue: currentSource ? currentSource.value : '',
     sourceLabel: currentSource ? currentSource.label : '',
     createdAt: Date.now(),
     totalComments: allComments.length,
@@ -820,12 +876,107 @@ async function loadRun(id) {
   lastDigest = '';
   $('digestBox').style.display = 'none';
   $('digestMeta').textContent = '';
-  currentSource = { type: run.sourceType, value: '', label: run.sourceLabel };
+  currentSource = { type: run.sourceType, value: run.sourceValue || '', label: run.sourceLabel };
   $('srcBadge').style.display = 'inline-block';
   $('srcBadge').textContent = `saved run → ${run.name}`;
   showAlert('');
   renderResults();
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+/* A saved run only stores its label for display, so older runs (saved before
+   source_value existed) need the raw value recovered from that label. */
+function sourceFromRun(run) {
+  let value = run.sourceValue || '';
+  if (!value) {
+    const label = run.sourceLabel || '';
+    const m = label.match(/^(?:Channel|Playlist|Video)\s+(\S+)$/);
+    if (m) value = m[1];
+    else if (label.startsWith('@')) value = label.slice(1);
+    else value = label;
+  }
+  return { type: run.sourceType, value, label: run.sourceLabel };
+}
+
+const commentKey = (c) =>
+  c.comment_id || `${c.video_id}|${c.author}|${c.date}|${(c.text || '').slice(0, 80)}`;
+
+async function refreshRun(id) {
+  const run = await store().get(id);
+  if (!run || !(run.comments || []).length) { showAlert('Nothing to refresh.'); return; }
+
+  const source = sourceFromRun(run);
+  if (!source.value) { showAlert('This run has no recorded source, so it cannot be refreshed.'); return; }
+  if (!usingProxy() && !$('apiKeyInput').value.trim()) {
+    showAlert('Enter an API key, or sign in and use the shared server key.');
+    return;
+  }
+  Api.key = $('apiKeyInput').value.trim();
+
+  // Newest comment already held is the cutoff; anything at or before it is skipped.
+  const cutoff = run.comments.reduce((max, c) => {
+    const t = c.date ? new Date(c.date).getTime() : 0;
+    return t > max ? t : max;
+  }, 0);
+  if (!cutoff) { showAlert('This run has no dated comments, so there is no cutoff to refresh from.'); return; }
+
+  $('progressWrap').style.display = 'block';
+  showAlert('');
+  setProgress(2, 'Checking for new comments…');
+
+  try {
+    const since = new Date(cutoff).toISOString();
+    const h = await harvest(source, since);
+
+    const seen = new Set(run.comments.map(commentKey));
+    const fresh = h.comments.filter(c => !seen.has(commentKey(c)));
+
+    if (!fresh.length) {
+      setProgress(100, 'No new comments since the last run.');
+      showAlert('');
+      return;
+    }
+
+    const merged = fresh.concat(run.comments);
+    // Rebuild per-video counts across the merged set rather than adding deltas,
+    // so the chart stays correct even if a video was skipped on one pass.
+    const counts = {};
+    merged.forEach(c => { counts[c.video_title] = (counts[c.video_title] || 0) + 1; });
+    const videoStatsMerged = Object.entries(counts).map(([title, count]) => ({ title, count }));
+
+    const updated = {
+      ...run, comments: merged, videoStats: videoStatsMerged,
+      totalComments: merged.length, totalVideos: videoStatsMerged.length,
+      sourceValue: source.value,
+    };
+
+    if (session && store() === CloudRunStore) {
+      // Cloud runs are append-only here: insert just the new rows.
+      await CloudRunStore.appendComments(id, fresh, videoStatsMerged, merged.length);
+    } else {
+      await LocalRunStore.save(updated);
+    }
+
+    // Show the refreshed run straight away.
+    allComments = merged;
+    videoStats = videoStatsMerged;
+    currentRunId = session ? id : null;
+    currentSource = source;
+    catFilter = null;
+    lastDigest = '';
+    $('digestBox').style.display = 'none';
+    $('digestMeta').textContent = '';
+    $('srcBadge').style.display = 'inline-block';
+    $('srcBadge').textContent = `refreshed → ${run.name}`;
+    renderResults();
+    setProgress(100, `${fresh.length} new comment(s) added.`);
+    if (h.stoppedEarly) showAlert(h.stoppedEarly);
+    await renderRuns();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } catch (e) {
+    setProgress(0, 'Error');
+    showAlert('Refresh failed: ' + friendlyError(e));
+  }
 }
 
 async function renderRuns() {
@@ -849,6 +1000,7 @@ async function renderRuns() {
         <div class="run-sub">${r.totalComments.toLocaleString()} comments · ${r.totalVideos} videos · ${new Date(r.createdAt).toLocaleString()}</div>
       </div>
       <button class="tiny" data-load="${r.id}">Open</button>
+      <button class="tiny ghost" data-refresh="${r.id}">Refresh</button>
       <button class="tiny ghost" data-rename="${r.id}">Rename</button>
       <button class="tiny ghost" data-del="${r.id}">Delete</button>
     </li>
@@ -859,6 +1011,11 @@ $('runsList').addEventListener('click', async (e) => {
   const btn = e.target.closest('button');
   if (!btn) return;
   if (btn.dataset.load) return loadRun(btn.dataset.load);
+  if (btn.dataset.refresh) {
+    btn.disabled = true;
+    try { await refreshRun(btn.dataset.refresh); } finally { btn.disabled = false; }
+    return;
+  }
   if (btn.dataset.del) {
     if (confirm('Delete this saved run?')) { await store().remove(btn.dataset.del); await renderRuns(); }
     return;

@@ -33,6 +33,16 @@ plain `watch?v=` form if you want just the one video.
 recent are kept; each can be named, reopened without re-fetching, renamed, or
 deleted. Useful for tracking a video's comments over time.
 
+**Incremental refresh** — **Refresh** on a saved run fetches only comments newer
+than the newest one it already holds. Results come back newest-first, so the fetch
+stops paging a video as soon as it reaches a comment older than the cutoff —
+typically **one quota unit per video** instead of one per 100 comments. New
+comments are merged and deduplicated on YouTube's own comment id.
+
+*Caveat:* the early stop is based on top-level comment dates, so a **new reply on
+an older thread** is not picked up. Re-fetch the source from the top when that
+matters.
+
 **Export** — CSV, JSON, and Excel (`.xlsx`, with column widths, a frozen header
 row, and autofilter).
 
@@ -62,6 +72,8 @@ The YouTube Data API gives 10,000 units/day by default.
 
 - Listing videos uses `playlistItems.list` — **1 unit** per 50 videos.
 - Fetching comments uses `commentThreads.list` — **1 unit** per 100 comments.
+- A **Refresh** costs roughly 1 unit per video regardless of how many comments
+  that video has, because paging stops at the cutoff.
 - Resolving a channel by *name* falls back to `search.list` — **100 units**.
   Paste a handle or channel ID instead to avoid this.
 
