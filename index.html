@@ -96,6 +96,7 @@
   select{width:100%;padding:10px 12px;border:1px solid var(--border-strong);border-radius:8px;background:var(--card);color:var(--text);font-size:13px;font-family:var(--mono);}
   select:focus{outline:2px solid var(--accent);outline-offset:1px;}
   .digest{border:1px solid var(--border);border-radius:10px;padding:4px 18px 14px;margin-top:16px;background:var(--bg);}
+  .sharebanner{background:rgba(47,82,51,.06);border-color:var(--accent);font-size:14px;}
   .digest h3{font-family:var(--serif);font-size:15px;font-weight:600;margin:16px 0 6px;color:var(--accent);}
   .digest p{font-size:13.5px;line-height:1.65;margin:0 0 10px;color:var(--text);}
   .digest ul{margin:0 0 10px;padding-left:20px;}
@@ -336,7 +337,7 @@ const LocalRunStore = {
     await this._tx('readwrite', (s) => s.put(run));
     const metas = await this.list();
     for (const old of metas.slice(MAX_RUNS)) await this.remove(old.id);
-    return run.id;
+    return { id: run.id, shareToken: null };
   },
   async remove(id) { return this._tx('readwrite', (s) => s.delete(id)); },
   async rename(id, name) {
@@ -372,7 +373,7 @@ const CloudRunStore = {
   },
   async list() {
     const { data, error } = await sb.from('runs')
-      .select('id,name,source_type,source_value,source_label,total_videos,total_comments,created_at,auto_refresh,last_refreshed_at')
+      .select('id,name,source_type,source_value,source_label,total_videos,total_comments,created_at,auto_refresh,last_refreshed_at,share_token')
       .order('created_at', { ascending: false });
     if (error) throw error;
     return (data || []).map(r => ({
@@ -381,7 +382,8 @@ const CloudRunStore = {
       totalVideos: r.total_videos, totalComments: r.total_comments,
       createdAt: new Date(r.created_at).getTime(),
       autoRefresh: !!r.auto_refresh,
-      lastRefreshedAt: r.last_refreshed_at ? new Date(r.last_refreshed_at).getTime() : null
+      lastRefreshedAt: r.last_refreshed_at ? new Date(r.last_refreshed_at).getTime() : null,
+      shareToken: r.share_token || null
     }));
   },
   async get(id) {
@@ -413,10 +415,11 @@ const CloudRunStore = {
       source_label: run.sourceLabel,
       total_videos: run.totalVideos, total_comments: run.totalComments,
       video_stats: run.videoStats
-    }).select('id').single();
+    }).select('id,share_token').single();
     if (error) throw error;
 
     const runId = data.id;
+    const shareToken = data.share_token;
     const CHUNK = 500;
     for (let i = 0; i < run.comments.length; i += CHUNK) {
       const rows = run.comments.slice(i, i + CHUNK).map(c => this._toDb(c, runId, userId));
@@ -430,7 +433,7 @@ const CloudRunStore = {
         setProgress(Math.round((i / run.comments.length) * 100), `Uploading ${i}/${run.comments.length}…`);
       }
     }
-    return runId;
+    return { id: runId, shareToken };
   },
   /* Refresh only ever adds comments, so insert the new rows and update the
      run's totals rather than rewriting every row. */
@@ -863,10 +866,14 @@ async function saveCurrentRun() {
   };
   try {
     $('saveRunBtn').disabled = true;
-    const newId = await store().save(run);
-    if (session && newId) currentRunId = newId;
+    const res = await store().save(run);
+    if (session && res && res.id) currentRunId = res.id;
     await renderRuns();
-    showAlert('');
+    if (res && res.shareToken) {
+      showShareLink(shareUrl(res.shareToken), 'Saved. Shareable link:');
+    } else {
+      showAlert(session ? 'Saved.' : 'Saved on this device. Sign in to get a shareable link.');
+    }
   } catch (e) {
     showAlert('Could not save run: ' + (e.message || e));
   } finally {
@@ -1011,6 +1018,7 @@ async function renderRuns() {
           r.lastRefreshedAt ? ` · last ran ${new Date(r.lastRefreshedAt).toLocaleDateString()}` : ''}</label>` : ''}
       </div>
       <button class="tiny" data-load="${r.id}">Open</button>
+      ${r.shareToken ? `<button class="tiny ghost" data-share="${escapeHtml(r.shareToken)}">Copy link</button>` : ''}
       <button class="tiny ghost" data-refresh="${r.id}">Refresh</button>
       <button class="tiny ghost" data-rename="${r.id}">Rename</button>
       <button class="tiny ghost" data-del="${r.id}">Delete</button>
@@ -1022,6 +1030,7 @@ $('runsList').addEventListener('click', async (e) => {
   const btn = e.target.closest('button');
   if (!btn) return;
   if (btn.dataset.load) return loadRun(btn.dataset.load);
+  if (btn.dataset.share) return copyShare(shareUrl(btn.dataset.share), btn);
   if (btn.dataset.auto !== undefined) return;   // checkbox handled separately
   if (btn.dataset.refresh) {
     btn.disabled = true;
@@ -1086,6 +1095,7 @@ const CATEGORIES = ['lead', 'question', 'complaint', 'praise', 'spam', 'other'];
 let catFilter = null;
 let analysisStats = null;
 let modelCatalogue = null;
+let sharedView = false;   // true when rendering a read-only shared link
 
 const fmtPrice = (v) => v === 0 ? 'free' : '$' + (v < 1 ? v.toFixed(3) : v.toFixed(2));
 const fmtCtx = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : Math.round(n / 1000) + 'K';
@@ -1266,7 +1276,7 @@ function renderAnalysis() {
     return;
   }
   $('analysisBody').style.display = 'block';
-  $('analysisEmpty').style.display = analysed.length < allComments.length ? 'block' : 'none';
+  $('analysisEmpty').style.display = (!sharedView && analysed.length < allComments.length) ? 'block' : 'none';
   if (!lastDigest) { $('digestBox').style.display = 'none'; $('copyDigestBtn').style.display = 'none'; }
 
   const n = analysed.length;
@@ -1554,8 +1564,115 @@ sb.auth.onAuthStateChange(async (_event, newSession) => {
   try { await renderRuns(); } catch (e) {}
 });
 
+/* ---------------------------------------------------------------
+   Shareable report links
+   --------------------------------------------------------------- */
+
+// Hash routing works on GitHub Pages with no server config, and keeps the
+// token out of the path that servers/log proxies tend to record.
+function shareUrl(token) {
+  return location.origin + location.pathname + '#/r/' + token;
+}
+
+function showShareLink(url, prefix) {
+  const box = $('alertBox');
+  box.style.display = 'block';
+  box.innerHTML = escapeHtml(prefix) + ' <a href="' + escapeHtml(url) +
+    '" target="_blank" rel="noopener" style="color:var(--accent);word-break:break-all;">' +
+    escapeHtml(url) + '</a>';
+}
+
+async function copyShare(url, btn) {
+  try {
+    await navigator.clipboard.writeText(url);
+    if (btn) { const t = btn.textContent; btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = t; }, 1500); }
+  } catch (e) {
+    showShareLink(url, 'Copy this link:');
+  }
+}
+
+// Anonymous read of one shared run, via the token-gated RPCs.
+const SharedStore = {
+  async get(token) {
+    const { data: meta, error } = await sb.rpc('shared_run', { p_token: token });
+    if (error) throw error;
+    if (!meta || !meta.length) return null;
+    const run = meta[0];
+
+    const comments = [];
+    const PAGE = 1000;
+    for (let off = 0; ; off += PAGE) {
+      const { data, error: cErr } = await sb.rpc('shared_comments',
+        { p_token: token, p_limit: PAGE, p_offset: off });
+      if (cErr) throw cErr;
+      (data || []).forEach(r => comments.push({
+        video_id: r.video_id, video_title: r.video_title,
+        author: r.author, text: r.text, date: r.published_at,
+        likes: r.likes, replies: r.reply_count, is_reply: r.is_reply,
+        sentiment: r.sentiment || undefined, category: r.category || undefined, theme: r.theme || undefined
+      }));
+      if (!data || data.length < PAGE) break;
+    }
+    return {
+      name: run.name, sourceLabel: run.source_label, sourceType: run.source_type,
+      totalComments: run.total_comments, totalVideos: run.total_videos,
+      videoStats: run.video_stats || [], comments
+    };
+  }
+};
+
+// Read-only view for someone opening a shared link. Hides every interactive
+// control, since a viewer has no session, no keys, and no ownership.
+async function enterSharedView(token) {
+  document.querySelectorAll('.card').forEach(c => {
+    if (c.querySelector('#sourceInput') || c.querySelector('#whoami') || c.id === 'runsCard') {
+      c.style.display = 'none';
+    }
+  });
+  sharedView = true;
+  $('emptyState').style.display = 'none';
+  $('analysisEmpty').style.display = 'none';
+  $('digestBtn').closest('.digestbar').style.display = 'none';
+  $('saveRunBtn').style.display = 'none';
+
+  const banner = document.createElement('div');
+  banner.className = 'card sharebanner';
+  banner.innerHTML = '<strong>Shared report</strong> — read-only. Open the dashboard to run your own.';
+  $('resultsArea').before(banner);
+
+  try {
+    const run = await SharedStore.get(token);
+    if (!run) { banner.innerHTML = 'This shared report was not found. The link may be wrong or the report was deleted.'; return; }
+    document.title = run.name + ' — shared report';
+    banner.innerHTML = '<strong>' + escapeHtml(run.name) + '</strong> · shared report (read-only) · ' +
+      run.totalComments.toLocaleString() + ' comments';
+    allComments = run.comments;
+    videoStats = run.videoStats.length ? run.videoStats : rebuildVideoStats(run.comments);
+    currentSource = { type: run.sourceType, value: '', label: run.sourceLabel };
+    renderResults();
+  } catch (e) {
+    banner.innerHTML = 'Could not load this shared report: ' + escapeHtml(e.message || String(e));
+  }
+}
+
+function rebuildVideoStats(comments) {
+  const counts = {};
+  comments.forEach(c => { counts[c.video_title] = (counts[c.video_title] || 0) + 1; });
+  return Object.entries(counts).map(([title, count]) => ({ title, count }));
+}
+
+function sharedTokenFromUrl() {
+  const m = (location.hash || '').match(/^#\/r\/([A-Za-z0-9_-]+)$/);
+  return m ? m[1] : null;
+}
+
 (async function init() {
   applyTheme((await Settings.get('yt_theme')) || 'auto');
+
+  // A shared link short-circuits the normal app: no auth, no fetch controls.
+  const shared = sharedTokenFromUrl();
+  if (shared) { await enterSharedView(shared); return; }
+
   const savedKey = await Settings.get('yt_api_key');
   if (savedKey) $('apiKeyInput').value = savedKey;
 

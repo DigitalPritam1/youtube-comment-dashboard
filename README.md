@@ -127,6 +127,36 @@ insert into public.allowed_emails (email, note) values ('teammate@example.com', 
 messages per hour — fine for one person, not for a team. Configure custom SMTP
 under *Authentication → Emails* before more than one or two people rely on it.
 
+## Shareable report links
+
+Every run you save to the cloud gets a **unique, unguessable link** automatically
+(`…/#/r/<token>`). Anyone you send it to — no account needed — sees a **read-only**
+version of that report: the stats, chart, sentiment breakdown, themes, and the
+comment table, with search, category filters, and export still working. All the
+interactive controls (fetch, analyse, save, refresh) are hidden for a viewer.
+
+Get the link from **Copy link** next to a saved run, or from the confirmation
+shown right after you save.
+
+**How the security works.** The link is a *capability*: the 122-bit token is the
+only thing that grants access. Two `SECURITY DEFINER` Postgres functions
+(`shared_run`, `shared_comments`) return only the run whose token matches, and
+never expose the owner, the raw source, or the token itself. Every other route —
+reading the tables directly, listing runs — stays blocked by row-level security,
+verified for the anonymous role. The token can't be guessed or enumerated.
+
+To stop sharing a report, rotate its token:
+
+```sql
+update public.runs set share_token = replace(gen_random_uuid()::text,'-','')
+  where id = '<run-id>';
+```
+
+The old link stops working immediately; a fresh Copy link gives the new one.
+
+Only **cloud** runs get links — a local (signed-out) run lives only in your
+browser, so there's nothing for a link to point at.
+
 ## Scheduled refresh (nightly)
 
 Tick **refresh nightly** on a cloud run and the server pulls new comments for it
