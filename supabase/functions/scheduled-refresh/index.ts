@@ -23,7 +23,7 @@ const DEADLINE_MS = 100_000;
 const started = () => Date.now();
 
 type Run = {
-  id: string; user_id: string; name: string;
+  id: string; user_id: string; name: string; platform: string;
   source_type: string; source_value: string | null;
 };
 
@@ -151,6 +151,97 @@ async function commentsSince(
   return { rows, fatal: false };
 }
 
+const GRAPH = "https://graph.facebook.com/v21.0/";
+
+async function metaGraph(path: string, params: Record<string, string>, token: string) {
+  const url = new URL(GRAPH + path);
+  for (const [k, v] of Object.entries(params)) if (v) url.searchParams.set(k, v);
+  url.searchParams.set("access_token", token);
+  const r = await fetch(url.toString());
+  const d = await r.json();
+  if (!r.ok) {
+    const e = new Error(d?.error?.message ?? "Meta API error") as Error & { status?: number };
+    e.status = r.status;
+    throw e;
+  }
+  return d;
+}
+
+function mapRow(it: Record<string, any>, post: { id: string; title: string }, isFB: boolean, isReply: boolean): NewComment {
+  return {
+    comment_id: it.id,
+    video_id: post.id, video_title: post.title,
+    author: (isFB ? it.from?.name : it.username) ?? "",
+    text: (isFB ? it.message : it.text) ?? "",
+    published_at: (isFB ? it.created_time : it.timestamp) ?? "",
+    likes: it.like_count ?? 0,
+    reply_count: isFB ? (it.comment_count ?? 0) : 0,
+    is_reply: isReply,
+  };
+}
+
+async function metaListPosts(run: Run, token: string, pageId: string): Promise<{ id: string; title: string }[]> {
+  const isFB = run.platform === "facebook";
+  if (run.source_type === "post" && run.source_value) {
+    return [{ id: run.source_value, title: isFB ? "Facebook post" : "Instagram media" }];
+  }
+  let node = pageId;
+  let edge = "posts";
+  let fields = "id,message,created_time";
+  if (!isFB) {
+    const pg = await metaGraph(pageId, { fields: "instagram_business_account" }, token);
+    node = pg?.instagram_business_account?.id;
+    if (!node) throw new Error("No Instagram Business account linked to the Page.");
+    edge = "media";
+    fields = "id,caption,timestamp";
+  }
+  const out: { id: string; title: string }[] = [];
+  let after = "";
+  while (out.length < 300) {
+    const params: Record<string, string> = { fields, limit: "25" };
+    if (after) params.after = after;
+    const r = await metaGraph(`${node}/${edge}`, params, token);
+    for (const p of r.data ?? []) {
+      out.push({ id: p.id, title: ((isFB ? p.message : p.caption) ?? "(no caption)").replace(/\s+/g, " ").slice(0, 60) });
+    }
+    after = r.paging?.cursors?.after ?? "";
+    if (!r.paging?.next || !after) break;
+  }
+  return out;
+}
+
+async function metaCommentsSince(
+  post: { id: string; title: string }, cutoffMs: number, token: string, isFB: boolean,
+): Promise<{ rows: NewComment[]; fatal: boolean }> {
+  const rows: NewComment[] = [];
+  const fields = isFB
+    ? "id,message,from,created_time,like_count,comment_count,comments.limit(50){id,message,from,created_time,like_count}"
+    : "id,text,username,timestamp,like_count,replies.limit(50){id,text,username,timestamp,like_count}";
+  let after = "";
+  try {
+    while (true) {
+      const params: Record<string, string> = { fields, limit: "50" };
+      if (isFB) params.order = "reverse_chronological";
+      if (after) params.after = after;
+      const r = await metaGraph(`${post.id}/comments`, params, token);
+      let reachedOld = false;
+      for (const it of r.data ?? []) {
+        const t = isFB ? it.created_time : it.timestamp;
+        if (new Date(t).getTime() <= cutoffMs) { reachedOld = true; if (isFB) break; else continue; }
+        rows.push(mapRow(it, post, isFB, false));
+        for (const rep of (isFB ? it.comments?.data : it.replies?.data) ?? []) rows.push(mapRow(rep, post, isFB, true));
+      }
+      if (reachedOld && isFB) break;
+      after = r.paging?.cursors?.after ?? "";
+      if (!r.paging?.next || !after) break;
+    }
+  } catch (e) {
+    const st = (e as { status?: number }).status;
+    return { rows, fatal: st === 401 || st === 403 };
+  }
+  return { rows, fatal: false };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return json({ error: "Use POST." }, 405);
 
@@ -162,15 +253,16 @@ Deno.serve(async (req: Request) => {
     return json({ error: "Not authorised." }, 401);
   }
 
-  const apiKey = Deno.env.get("YOUTUBE_API_KEY");
-  if (!apiKey) return json({ error: "YOUTUBE_API_KEY is not configured." }, 503);
+  const ytKey = Deno.env.get("YOUTUBE_API_KEY") ?? "";
+  const metaToken = Deno.env.get("META_PAGE_TOKEN") ?? "";
+  const metaPageId = Deno.env.get("META_PAGE_ID") ?? "";
 
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey);
   const t0 = started();
 
   const { data: runs, error } = await admin
     .from("runs")
-    .select("id,user_id,name,source_type,source_value")
+    .select("id,user_id,name,platform,source_type,source_value")
     .eq("auto_refresh", true);
   if (error) return json({ error: error.message }, 500);
   if (!runs?.length) return json({ ok: true, runs: 0, note: "No runs are flagged for auto refresh." }, 200);
@@ -190,18 +282,26 @@ Deno.serve(async (req: Request) => {
       const cutoffMs = newest?.[0]?.published_at ? new Date(newest[0].published_at).getTime() : 0;
       if (!cutoffMs) throw new Error("Run has no dated comments to refresh from.");
 
-      const videos = await listVideos(run, apiKey);
+      const isMeta = run.platform === "facebook" || run.platform === "instagram";
+      if (isMeta && (!metaToken || !metaPageId)) throw new Error("META_PAGE_TOKEN / META_PAGE_ID not configured.");
+      if (!isMeta && !ytKey) throw new Error("YOUTUBE_API_KEY not configured.");
+
+      const containers = isMeta
+        ? await metaListPosts(run, metaToken, metaPageId)
+        : await listVideos(run, ytKey);
       const fresh: NewComment[] = [];
 
-      for (const v of videos) {
+      for (const c of containers) {
         if (Date.now() - t0 > DEADLINE_MS) {
           status = "partial";
           detail = `Stopped on the time budget after ${fresh.length} new comment(s).`;
           break;
         }
-        const r = await commentsSince(v, cutoffMs, apiKey);
+        const r = isMeta
+          ? await metaCommentsSince(c, cutoffMs, metaToken, run.platform === "facebook")
+          : await commentsSince(c, cutoffMs, ytKey);
         fresh.push(...r.rows);
-        if (r.fatal) { status = "partial"; detail = "YouTube quota exhausted."; break; }
+        if (r.fatal) { status = "partial"; detail = isMeta ? "Meta token/permission error." : "YouTube quota exhausted."; break; }
       }
 
       if (fresh.length) {

@@ -30,7 +30,7 @@ const ANTHROPIC_PRICE_OUT = 25.0;
 const MAX_QUOTED = 30;
 const MAX_CHARS = 300;
 
-const SYSTEM = `You write a short, practical brief for the owner of an Indian farming YouTube channel, based on comments that have already been classified by sentiment, category, and theme. Comments may be in Hindi, English, or mixed Hinglish.
+const SYSTEM = `You write a short, practical brief for the owner of an Indian farming brand\u2019s social-media accounts (YouTube, Facebook, Instagram), based on comments that have already been classified by sentiment, category, and theme. Comments may be in Hindi, English, or mixed Hinglish.
 
 Write in Markdown with exactly these sections, in this order:
 

@@ -197,6 +197,43 @@ Analysis is **not** run automatically — new comments arrive tagged as unanalys
 and you classify them on the next visit. Auto-analysis and emailing the brief are
 the natural next step.
 
+## Meta: Facebook & Instagram
+
+The dashboard pulls comments from your **own Facebook Page** and its connected
+**Instagram Business account** too, via Meta's official Graph API (pinned to
+v21.0). A platform toggle above the input switches between YouTube / Facebook /
+Instagram — everything downstream (analysis, brief, saved runs, share links,
+nightly refresh) is identical, because comments are stored in the same generic
+shape regardless of source.
+
+- **Facebook** — leave the box blank to pull comments across your Page's recent
+  posts, or paste a single post ID (`{pageid}_{postid}`).
+- **Instagram** — blank pulls your account's recent media, or paste a media ID.
+- Replies are flattened in and tagged, exactly like YouTube.
+
+**Scope:** only your *own* Page + connected IG account. That is all Meta's
+official API allows; competitor/other-page comments are not accessible (the only
+route would be scrapers, which are fragile and against Meta's ToS — deliberately
+not built).
+
+### One-time Meta setup
+
+1. Create a **Business-type app** at [developers.facebook.com](https://developers.facebook.com);
+   add the *Facebook Login* + *Instagram Graph API* products, and make sure your
+   Instagram Business/Creator account is linked to the Facebook Page.
+2. In **Meta Business Suite → Business Settings → System Users**, create a system
+   user and **generate a token** with `pages_read_engagement`,
+   `pages_read_user_content`, `pages_show_list`, `instagram_basic`,
+   `instagram_manage_comments`, assigned to your Page. A System User token
+   **never expires** — ideal for the nightly refresh.
+3. Paste **`META_PAGE_TOKEN`** and **`META_PAGE_ID`** into *Supabase → Edge
+   Functions → Secrets*. Until set, the Facebook/Instagram fetch returns a clear
+   503 (and "use my own token" still works for a token you paste in the browser).
+
+The token is held server-side by the `meta-proxy` edge function (allowlist-gated,
+just like the YouTube proxy) and never reaches the browser. The same
+`allowed_emails` gate covers Meta.
+
 ## Comment analysis
 
 Signed-in users can run a **model pass** over the extracted comments — Claude by

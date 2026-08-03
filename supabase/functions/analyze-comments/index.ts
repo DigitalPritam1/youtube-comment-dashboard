@@ -59,7 +59,7 @@ function rankOf(id: string): number {
   return RANK.length + 50;
 }
 
-const SYSTEM = `You classify comments left on a YouTube channel that publishes Indian farming and agriculture content. Comments are often in Hindi, English, or mixed Hinglish, and may be transliterated.
+const SYSTEM = `You classify social-media comments (from YouTube, Facebook, or Instagram) on an Indian farming and agriculture brand\u2019s posts. Comments are often in Hindi, English, or mixed Hinglish, and may be transliterated.
 
 For each comment assign:
 

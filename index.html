@@ -118,6 +118,14 @@
   }
   .theme-toggle button:hover:not([aria-pressed="true"]){color:var(--text);transform:none;filter:none;}
   .theme-toggle button[aria-pressed="true"]{background:var(--bg-elev);color:var(--accent);box-shadow:var(--shadow-sm);}
+  .platform-tabs{display:inline-flex;gap:3px;padding:4px;margin-bottom:18px;background:var(--field);border:1px solid var(--border);border-radius:var(--r-sm);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);}
+  .platform-tabs button{background:transparent;color:var(--text-sec);border:none;border-radius:9px;padding:8px 16px;font-size:13px;font-weight:600;box-shadow:none;transition:color var(--dur) var(--ease),background var(--dur) var(--ease),box-shadow var(--dur) var(--ease);}
+  .platform-tabs button:hover:not([aria-pressed="true"]){color:var(--text);transform:none;filter:none;}
+  .platform-tabs button[aria-pressed="true"]{background:var(--bg-elev);color:var(--accent);box-shadow:var(--shadow-sm);}
+  .pbadge{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.03em;padding:2px 7px;border-radius:6px;margin-right:8px;vertical-align:middle;}
+  .pbadge.youtube{background:rgba(192,64,47,.15);color:var(--danger);}
+  .pbadge.facebook{background:rgba(37,99,235,.15);color:#3b82f6;}
+  .pbadge.instagram{background:rgba(214,41,118,.15);color:#e0559a;}
   .hint{font-size:12.5px;color:var(--text-mut);margin-top:10px;line-height:1.6;}
   .hint code, code{font-family:var(--mono);font-size:.92em;background:var(--field);border:1px solid var(--border);border-radius:6px;padding:1px 5px;}
   .src-badge{display:inline-block;font-family:var(--mono);font-size:11px;color:var(--text-sec);background:var(--field);border:1px solid var(--border);border-radius:8px;padding:3px 9px;margin-top:10px;}
@@ -264,13 +272,18 @@
   </div>
 
   <div class="card">
+    <div class="platform-tabs" id="platformTabs" role="group" aria-label="Platform">
+      <button data-platform="youtube" aria-pressed="true">YouTube</button>
+      <button data-platform="facebook" aria-pressed="false">Facebook</button>
+      <button data-platform="instagram" aria-pressed="false">Instagram</button>
+    </div>
     <div class="row">
       <div>
-        <label for="sourceInput">Channel, playlist, or video</label>
+        <label for="sourceInput" id="sourceLabel">Channel, playlist, or video</label>
         <input type="text" id="sourceInput" placeholder="@IndianFarmerOfficial" />
       </div>
       <div>
-        <label for="apiKeyInput">YouTube Data API key</label>
+        <label for="apiKeyInput" id="keyLabel">YouTube Data API key</label>
         <input type="password" id="apiKeyInput" placeholder="Paste your API key" />
       </div>
       <div>
@@ -282,10 +295,9 @@
       <label><input type="radio" name="keysrc" value="own" /> Use my own key</label>
     </div>
     <div class="src-badge" id="srcBadge" style="display:none;"></div>
-    <p class="hint">
+    <p class="hint" id="sourceHint">
       Paste any of: <code>@handle</code>, a channel ID or URL, a playlist URL, a video URL
       (<code>watch?v=</code>, <code>youtu.be</code>, <code>/shorts/</code>), or a bare video ID.
-      With your own key, everything runs in your browser and the key is saved on this device only.
     </p>
     <div class="progress-wrap" id="progressWrap">
       <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
@@ -473,7 +485,7 @@ const CloudRunStore = {
   },
   async list() {
     const { data, error } = await sb.from('runs')
-      .select('id,name,source_type,source_value,source_label,total_videos,total_comments,created_at,auto_refresh,last_refreshed_at,share_token')
+      .select('id,name,source_type,source_value,source_label,platform,total_videos,total_comments,created_at,auto_refresh,last_refreshed_at,share_token')
       .order('created_at', { ascending: false });
     if (error) throw error;
     return (data || []).map(r => ({
@@ -483,7 +495,8 @@ const CloudRunStore = {
       createdAt: new Date(r.created_at).getTime(),
       autoRefresh: !!r.auto_refresh,
       lastRefreshedAt: r.last_refreshed_at ? new Date(r.last_refreshed_at).getTime() : null,
-      shareToken: r.share_token || null
+      shareToken: r.share_token || null,
+      platform: r.platform || 'youtube'
     }));
   },
   async get(id) {
@@ -504,6 +517,7 @@ const CloudRunStore = {
       sourceValue: run.source_value || '', sourceLabel: run.source_label,
       createdAt: new Date(run.created_at).getTime(),
       totalComments: run.total_comments, totalVideos: run.total_videos,
+      platform: run.platform || 'youtube',
       videoStats: run.video_stats || [], comments
     };
   },
@@ -512,7 +526,7 @@ const CloudRunStore = {
     const { data, error } = await sb.from('runs').insert({
       user_id: userId, name: run.name,
       source_type: run.sourceType, source_value: run.sourceValue || null,
-      source_label: run.sourceLabel,
+      source_label: run.sourceLabel, platform: run.platform || 'youtube',
       total_videos: run.totalVideos, total_comments: run.totalComments,
       video_stats: run.videoStats
     }).select('id,share_token').single();
@@ -573,8 +587,22 @@ const store = () => (session ? CloudRunStore : LocalRunStore);
    Input parsing — channel / playlist / video from almost any paste
    --------------------------------------------------------------- */
 
-function parseSource(raw) {
+function parseSource(raw, platform) {
   const input = raw.trim();
+  if (platform === 'facebook' || platform === 'instagram') {
+    // Bare post/media id -> single post; otherwise pull the account's recent posts.
+    if (/^\d+(_\d+)?$/.test(input)) {
+      return { platform, type: 'post', value: input,
+               label: (platform === 'facebook' ? 'FB post ' : 'IG media ') + input };
+    }
+    return { platform, type: 'account', value: '',
+             label: platform === 'facebook' ? 'Facebook Page' : 'Instagram account' };
+  }
+  const r = parseSourceYT(input);
+  r.platform = 'youtube';
+  return r;
+}
+function parseSourceYT(input) {
   if (!input) throw new Error('Enter a channel, playlist, or video.');
 
   // Bare IDs first, before we try to read it as a URL.
@@ -627,6 +655,55 @@ function parseSource(raw) {
 const Api = { mode: 'own', key: '' };
 const usingProxy = () => Api.mode === 'proxy' && !!session;
 
+/* ---------------------------------------------------------------
+   Platform (YouTube / Facebook / Instagram)
+   --------------------------------------------------------------- */
+let platform = 'youtube';
+const isMeta = (p) => p === 'facebook' || p === 'instagram';
+const PLATFORM_CFG = {
+  youtube: {
+    sourceLabel: 'Channel, playlist, or video',
+    placeholder: '@IndianFarmerOfficial',
+    keyLabel: 'YouTube Data API key',
+    keyPlaceholder: 'Paste your API key',
+    hint: 'Paste any of: <code>@handle</code>, a channel ID or URL, a playlist URL, a video URL (<code>watch?v=</code>, <code>youtu.be</code>, <code>/shorts/</code>), or a bare video ID.'
+  },
+  facebook: {
+    sourceLabel: 'Facebook — blank for your Page, or a post ID',
+    placeholder: 'Leave blank to pull your Page\u2019s recent posts',
+    keyLabel: 'Meta access token',
+    keyPlaceholder: 'Paste a Page / System-User token',
+    hint: 'Leave the box empty to pull comments from your Facebook Page\u2019s recent posts, or paste a single post ID (<code>{pageid}_{postid}</code>). Needs a Meta token \u2014 or sign in and use the shared server token.'
+  },
+  instagram: {
+    sourceLabel: 'Instagram — blank for your account, or a media ID',
+    placeholder: 'Leave blank to pull your account\u2019s recent media',
+    keyLabel: 'Meta access token',
+    keyPlaceholder: 'Paste a Page / System-User token',
+    hint: 'Leave the box empty to pull comments from your Instagram account\u2019s recent posts, or paste a single media ID. Needs a Meta token \u2014 or sign in and use the shared server token.'
+  }
+};
+const PBADGE = { youtube: 'YT', facebook: 'FB', instagram: 'IG' };
+
+async function applyPlatform(p) {
+  platform = p;
+  document.querySelectorAll('#platformTabs button').forEach(b =>
+    b.setAttribute('aria-pressed', String(b.dataset.platform === p)));
+  const cfg = PLATFORM_CFG[p];
+  $('sourceLabel').textContent = cfg.sourceLabel;
+  $('sourceInput').placeholder = cfg.placeholder;
+  $('keyLabel').textContent = cfg.keyLabel;
+  $('sourceHint').innerHTML = cfg.hint;
+  const savedKey = (await Settings.get('key_' + p)) ||
+                   (p === 'youtube' ? (await Settings.get('yt_api_key')) : '') || '';
+  $('apiKeyInput').value = savedKey;
+  if (Api.mode === 'own') $('apiKeyInput').placeholder = cfg.keyPlaceholder;
+  await Settings.set('platform', p);
+}
+
+document.querySelectorAll('#platformTabs button').forEach(btn =>
+  btn.addEventListener('click', () => applyPlatform(btn.dataset.platform)));
+
 async function ytFetch(endpoint, params) {
   let res, data;
   if (usingProxy()) {
@@ -652,6 +729,41 @@ async function ytFetch(endpoint, params) {
     throw err;
   }
   return data;
+}
+
+const GRAPH_URL = 'https://graph.facebook.com/v21.0/';
+/* Mirrors ytFetch: proxy through meta-proxy with the shared token, else call
+   the Graph API directly with the pasted token. `action:'ids'` resolves the
+   owner's Page + linked Instagram account. */
+async function metaFetch(endpoint, params, action) {
+  if (usingProxy()) {
+    const res = await fetch(SUPABASE_URL + '/functions/v1/meta-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
+      body: JSON.stringify(action ? { action } : { endpoint, params })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { const e = new Error(data.error?.message || 'Meta API error'); e.status = res.status; throw e; }
+    return data;
+  }
+  if (action === 'ids') {
+    const u = new URL(GRAPH_URL + 'me/accounts');
+    u.searchParams.set('fields', 'id,name,instagram_business_account');
+    u.searchParams.set('access_token', Api.key);
+    const r = await fetch(u); const d = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(d.error?.message || 'Meta API error'); e.status = r.status; throw e; }
+    const pg = (d.data || [])[0];
+    if (!pg) throw new Error('This token cannot see any Facebook Page.');
+    return { page_id: pg.id, page_name: pg.name, ig_user_id: pg.instagram_business_account?.id || null };
+  }
+  const u = new URL(GRAPH_URL + endpoint.replace(/^\/+/, ''));
+  Object.entries(params || {}).forEach(([k, v]) => {
+    if (k !== 'access_token' && v != null && v !== '') u.searchParams.set(k, String(v));
+  });
+  u.searchParams.set('access_token', Api.key);
+  const r = await fetch(u); const d = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error(d.error?.message || 'Meta API error'); e.status = r.status; throw e; }
+  return d;
 }
 
 function friendlyError(e) {
@@ -793,7 +905,119 @@ function showAlert(msg) {
 /* Walks every video in a source and collects comments. `since` makes it
    incremental. Shared by the first fetch and by refresh so the two can never
    drift apart. */
+/* ---------------------------------------------------------------
+   Meta (Facebook + Instagram) fetch — mirrors the YouTube harvest and
+   produces the identical comment shape, so everything downstream is
+   platform-agnostic.
+   --------------------------------------------------------------- */
+let metaIds = null;   // {page_id, ig_user_id, page_name}, resolved once per fetch
+
+async function resolvePosts(source) {
+  metaIds = await metaFetch(null, null, 'ids');
+  if (source.type === 'post') {
+    return [{ id: source.value, title: source.platform === 'facebook' ? 'Facebook post' : 'Instagram media' }];
+  }
+  const isFB = source.platform === 'facebook';
+  const node = isFB ? metaIds.page_id : metaIds.ig_user_id;
+  if (!node) throw new Error(isFB ? 'No Facebook Page is available for this token.'
+                                  : 'No Instagram Business account is linked to your Page.');
+  const edge = isFB ? 'posts' : 'media';
+  const fields = isFB ? 'id,message,created_time' : 'id,caption,timestamp';
+  const out = [];
+  let after = '';
+  while (out.length < 300) {
+    const params = { fields, limit: '25' };
+    if (after) params.after = after;
+    const r = await metaFetch(node + '/' + edge, params);
+    (r.data || []).forEach(pp => out.push({
+      id: pp.id,
+      title: ((isFB ? pp.message : pp.caption) || '(no caption)').replace(/\s+/g, ' ').slice(0, 60)
+    }));
+    after = r.paging?.cursors?.after || '';
+    if (!r.paging?.next || !after) break;
+  }
+  return out;
+}
+
+function mapMetaComment(it, post, isFB, isReply) {
+  return {
+    comment_id: it.id,
+    video_id: post.id, video_title: post.title,
+    author: (isFB ? it.from?.name : it.username) || '',
+    text: (isFB ? it.message : it.text) || '',
+    date: (isFB ? it.created_time : it.timestamp) || '',
+    likes: it.like_count || 0,
+    replies: isFB ? (it.comment_count || 0) : 0,
+    is_reply: !!isReply
+  };
+}
+
+async function getCommentsForPost(post, source, since) {
+  const isFB = source.platform === 'facebook';
+  const cutoff = since ? new Date(since).getTime() : null;
+  const fields = isFB
+    ? 'id,message,from,created_time,like_count,comment_count,comments.limit(50){id,message,from,created_time,like_count}'
+    : 'id,text,username,timestamp,like_count,replies.limit(50){id,text,username,timestamp,like_count}';
+  const comments = [];
+  let after = '';
+  try {
+    while (true) {
+      const params = { fields, limit: '50' };
+      if (isFB) params.order = 'reverse_chronological';
+      if (after) params.after = after;
+      const r = await metaFetch(post.id + '/comments', params);
+      let reachedOld = false;
+      for (const it of (r.data || [])) {
+        const t = isFB ? it.created_time : it.timestamp;
+        if (cutoff !== null && new Date(t).getTime() <= cutoff) {
+          reachedOld = true;
+          if (isFB) break;   // FB is newest-first -> safe to stop; IG isn't -> skip & continue
+          continue;
+        }
+        comments.push(mapMetaComment(it, post, isFB, false));
+        const reps = isFB ? it.comments?.data : it.replies?.data;
+        (reps || []).forEach(rep => comments.push(mapMetaComment(rep, post, isFB, true)));
+      }
+      if (reachedOld && isFB) break;
+      after = r.paging?.cursors?.after || '';
+      if (!r.paging?.next || !after) break;
+    }
+  } catch (e) {
+    // A token/permission error is fatal; a single inaccessible post is not.
+    const fatal = e.status === 401 || e.status === 403 || /token|oauth|permission|expired/i.test(e.message || '');
+    return { comments, fatal, error: e };
+  }
+  return { comments, fatal: false, error: null };
+}
+
+async function metaHarvest(source, since) {
+  setProgress(6, source.platform === 'facebook' ? 'Listing Facebook posts…' : 'Listing Instagram media…');
+  const posts = await resolvePosts(source);
+  if (!posts.length) throw new Error('No posts found for your account.');
+
+  const comments = [];
+  const videoStats = [];
+  let stoppedEarly = null;
+  let skipped = 0;
+  for (let i = 0; i < posts.length; i++) {
+    const post = posts[i];
+    setProgress(10 + Math.round(((i + 1) / posts.length) * 88), `[${i + 1}/${posts.length}] ${post.title}`);
+    const r = await getCommentsForPost(post, source, since);
+    comments.push(...r.comments);
+    videoStats.push({ title: post.title, count: r.comments.length });
+    if (r.fatal) { stoppedEarly = `Stopped at post ${i + 1} of ${posts.length}. ${r.error.message}`; break; }
+    if (r.error) skipped++;
+    await new Promise(res => setTimeout(res, 60));
+  }
+  return { comments, videoStats, stoppedEarly, skipped };
+}
+
+/* Platform dispatcher — the only branch point; both halves return the same shape. */
 async function harvest(source, since) {
+  return isMeta(source.platform) ? metaHarvest(source, since) : ytHarvest(source, since);
+}
+
+async function ytHarvest(source, since) {
   const videos = await resolveVideos(source);
   if (!videos.length) throw new Error('No videos found for that source.');
 
@@ -825,16 +1049,21 @@ async function harvest(source, since) {
 async function runFetch() {
   const raw = $('sourceInput').value;
   const apiKey = $('apiKeyInput').value.trim();
-  if (!raw.trim()) { showAlert('Enter a channel, playlist, or video.'); return; }
-  if (!usingProxy() && !apiKey) { showAlert('Enter an API key, or sign in and use the shared server key.'); return; }
+  if (!isMeta(platform) && !raw.trim()) { showAlert('Enter a channel, playlist, or video.'); return; }
+  if (!usingProxy() && !apiKey) {
+    showAlert(isMeta(platform)
+      ? 'Paste a Meta access token, or sign in and use the shared server token.'
+      : 'Enter an API key, or sign in and use the shared server key.');
+    return;
+  }
 
   let source;
-  try { source = parseSource(raw); }
+  try { source = parseSource(raw, platform); }
   catch (e) { showAlert(e.message); return; }
 
   currentSource = source;
   Api.key = apiKey;
-  if (apiKey) await Settings.set('yt_api_key', apiKey);
+  if (apiKey) await Settings.set('key_' + platform, apiKey);
   showAlert('');
   $('srcBadge').style.display = 'inline-block';
   $('srcBadge').textContent = source.type + ' → ' + source.label;
@@ -959,6 +1188,7 @@ async function saveCurrentRun() {
     sourceType: currentSource ? currentSource.type : 'unknown',
     sourceValue: currentSource ? currentSource.value : '',
     sourceLabel: currentSource ? currentSource.label : '',
+    platform: currentSource ? (currentSource.platform || 'youtube') : 'youtube',
     createdAt: Date.now(),
     totalComments: allComments.length,
     totalVideos: videoStats.length,
@@ -992,7 +1222,7 @@ async function loadRun(id) {
   lastDigest = '';
   $('digestBox').style.display = 'none';
   $('digestMeta').textContent = '';
-  currentSource = { type: run.sourceType, value: run.sourceValue || '', label: run.sourceLabel };
+  currentSource = { type: run.sourceType, value: run.sourceValue || '', label: run.sourceLabel, platform: run.platform || 'youtube' };
   $('srcBadge').style.display = 'inline-block';
   $('srcBadge').textContent = `saved run → ${run.name}`;
   showAlert('');
@@ -1003,6 +1233,10 @@ async function loadRun(id) {
 /* A saved run only stores its label for display, so older runs (saved before
    source_value existed) need the raw value recovered from that label. */
 function sourceFromRun(run) {
+  const platform = run.platform || 'youtube';
+  if (platform === 'facebook' || platform === 'instagram') {
+    return { platform, type: run.sourceType, value: run.sourceValue || '', label: run.sourceLabel };
+  }
   let value = run.sourceValue || '';
   if (!value) {
     const label = run.sourceLabel || '';
@@ -1011,7 +1245,7 @@ function sourceFromRun(run) {
     else if (label.startsWith('@')) value = label.slice(1);
     else value = label;
   }
-  return { type: run.sourceType, value, label: run.sourceLabel };
+  return { platform, type: run.sourceType, value, label: run.sourceLabel };
 }
 
 const commentKey = (c) =>
@@ -1022,9 +1256,12 @@ async function refreshRun(id) {
   if (!run || !(run.comments || []).length) { showAlert('Nothing to refresh.'); return; }
 
   const source = sourceFromRun(run);
-  if (!source.value) { showAlert('This run has no recorded source, so it cannot be refreshed.'); return; }
+  const metaRun = source.platform === 'facebook' || source.platform === 'instagram';
+  if (!metaRun && !source.value) { showAlert('This run has no recorded source, so it cannot be refreshed.'); return; }
   if (!usingProxy() && !$('apiKeyInput').value.trim()) {
-    showAlert('Enter an API key, or sign in and use the shared server key.');
+    showAlert(metaRun
+      ? 'Paste a Meta access token, or sign in and use the shared server token.'
+      : 'Enter an API key, or sign in and use the shared server key.');
     return;
   }
   Api.key = $('apiKeyInput').value.trim();
@@ -1112,7 +1349,7 @@ async function renderRuns() {
   $('runsList').innerHTML = runs.map(r => `
     <li>
       <div class="run-meta">
-        <div class="run-name">${escapeHtml(r.name)}</div>
+        <div class="run-name"><span class="pbadge ${r.platform || 'youtube'}">${PBADGE[r.platform || 'youtube']}</span>${escapeHtml(r.name)}</div>
         <div class="run-sub">${r.totalComments.toLocaleString()} comments · ${r.totalVideos} videos · ${new Date(r.createdAt).toLocaleString()}</div>
         ${session ? `<label class="nightly"><input type="checkbox" data-auto="${r.id}" ${r.autoRefresh ? 'checked' : ''}> refresh nightly${
           r.lastRefreshedAt ? ` · last ran ${new Date(r.lastRefreshedAt).toLocaleDateString()}` : ''}</label>` : ''}
@@ -1615,7 +1852,7 @@ async function applyKeyMode(mode) {
   Api.mode = mode;
   const own = mode === 'own';
   $('apiKeyInput').disabled = !own;
-  $('apiKeyInput').placeholder = own ? 'Paste your API key' : 'Using the shared server key';
+  $('apiKeyInput').placeholder = own ? (PLATFORM_CFG[platform]?.keyPlaceholder || 'Paste your key') : 'Using the shared server token';
   document.querySelectorAll('[name=keysrc]').forEach(r => { r.checked = r.value === mode; });
   await Settings.set('yt_key_mode', mode);
 }
@@ -1725,6 +1962,7 @@ const SharedStore = {
     }
     return {
       name: run.name, sourceLabel: run.source_label, sourceType: run.source_type,
+      platform: run.platform || 'youtube',
       totalComments: run.total_comments, totalVideos: run.total_videos,
       videoStats: run.video_stats || [], comments
     };
@@ -1754,11 +1992,12 @@ async function enterSharedView(token) {
     const run = await SharedStore.get(token);
     if (!run) { banner.innerHTML = 'This shared report was not found. The link may be wrong or the report was deleted.'; return; }
     document.title = run.name + ' — shared report';
-    banner.innerHTML = '<strong>' + escapeHtml(run.name) + '</strong> · shared report (read-only) · ' +
-      run.totalComments.toLocaleString() + ' comments';
+    const pl = run.platform || 'youtube';
+    banner.innerHTML = '<span class="pbadge ' + pl + '">' + PBADGE[pl] + '</span><strong>' +
+      escapeHtml(run.name) + '</strong> · shared report (read-only) · ' + run.totalComments.toLocaleString() + ' comments';
     allComments = run.comments;
     videoStats = run.videoStats.length ? run.videoStats : rebuildVideoStats(run.comments);
-    currentSource = { type: run.sourceType, value: '', label: run.sourceLabel };
+    currentSource = { type: run.sourceType, value: '', label: run.sourceLabel, platform: pl };
     renderResults();
   } catch (e) {
     banner.innerHTML = 'Could not load this shared report: ' + escapeHtml(e.message || String(e));
@@ -1783,8 +2022,7 @@ function sharedTokenFromUrl() {
   const shared = sharedTokenFromUrl();
   if (shared) { await enterSharedView(shared); return; }
 
-  const savedKey = await Settings.get('yt_api_key');
-  if (savedKey) $('apiKeyInput').value = savedKey;
+  await applyPlatform((await Settings.get('platform')) || 'youtube');
 
   const { data } = await sb.auth.getSession();
   session = data.session || null;
