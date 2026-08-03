@@ -55,6 +55,25 @@ function json(body: unknown, status: number, origin: string | null) {
   });
 }
 
+/**
+ * A System User token is a *user*-context token. Facebook's Page content edges
+ * (/{page}/posts, /{page}/feed, /{post}/comments) and the linked Instagram
+ * account must be read with the *Page* access token, which is derived from the
+ * user-context token. Exchange the stored token for the Page token once; if the
+ * stored value is already a Page token, or the exchange isn't permitted, fall
+ * back to it unchanged. The Page token stays server-side, exactly like the seed.
+ */
+async function resolvePageToken(pageId: string, seed: string): Promise<string> {
+  try {
+    const r = await fetch(
+      `${GRAPH}${pageId}?fields=access_token&access_token=${encodeURIComponent(seed)}`,
+    );
+    const d = await r.json();
+    if (r.ok && typeof d?.access_token === "string" && d.access_token) return d.access_token;
+  } catch { /* fall through to the seed token */ }
+  return seed;
+}
+
 Deno.serve(async (req: Request) => {
   const origin = req.headers.get("Origin");
 
@@ -113,11 +132,15 @@ Deno.serve(async (req: Request) => {
     return json({ error: { message: "Body must be JSON." } }, 400, origin);
   }
 
+  // Every Graph read below uses the Page access token, exchanged from the
+  // stored System User token. (No-op if the stored token is already a Page token.)
+  const graphToken = await resolvePageToken(pageId, pageToken);
+
   // --- resolve the owner's Page id + linked Instagram id (one round trip) ---
   if (payload.action === "ids") {
     try {
       const r = await fetch(
-        `${GRAPH}${pageId}?fields=instagram_business_account,name&access_token=${encodeURIComponent(pageToken)}`,
+        `${GRAPH}${pageId}?fields=instagram_business_account,name&access_token=${encodeURIComponent(graphToken)}`,
       );
       const data = await r.json();
       if (!r.ok) throw new Error(data?.error?.message || "Could not read the Page.");
@@ -144,7 +167,7 @@ Deno.serve(async (req: Request) => {
       url.searchParams.set(k, String(v));
     }
   }
-  url.searchParams.set("access_token", pageToken);
+  url.searchParams.set("access_token", graphToken);
 
   const upstream = await fetch(url.toString());
   const body = await upstream.text();

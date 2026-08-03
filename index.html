@@ -153,6 +153,10 @@
   tr:hover td{background:var(--hover);}
   .comment-text{max-width:440px;line-height:1.55;}
   .video-title{color:var(--text-sec);font-size:12px;}
+  .post-cell{display:flex;gap:8px;align-items:center;}
+  .post-cell a{color:var(--text-sec);text-decoration:none;border-bottom:1px solid transparent;}
+  .post-cell a:hover{color:var(--accent);border-bottom-color:var(--accent);}
+  .post-thumb{flex:0 0 auto;width:46px;height:46px;object-fit:cover;border-radius:8px;background:rgba(0,0,0,.06);}
   .pill{display:inline-block;background:rgba(180,132,42,.16);color:var(--gold);border-radius:99px;padding:2px 9px;font-size:11px;font-family:var(--mono);}
   .empty{text-align:center;padding:64px 20px;color:var(--text-mut);font-size:15px;}
   .chart-box{position:relative;height:290px;}
@@ -468,6 +472,7 @@ const CloudRunStore = {
       run_id: runId, user_id: userId,
       comment_id: c.comment_id || null,
       video_id: c.video_id, video_title: c.video_title,
+      video_url: c.video_url || null, video_thumb: c.video_thumb || null,
       author: c.author, text: c.text,
       published_at: c.date || null,
       likes: c.likes || 0, reply_count: c.replies || 0, is_reply: !!c.is_reply,
@@ -478,6 +483,7 @@ const CloudRunStore = {
     return {
       comment_id: r.comment_id || undefined,
       video_id: r.video_id, video_title: r.video_title,
+      video_url: r.video_url || undefined, video_thumb: r.video_thumb || undefined,
       author: r.author, text: r.text, date: r.published_at,
       likes: r.likes, replies: r.reply_count, is_reply: r.is_reply,
       sentiment: r.sentiment || undefined, category: r.category || undefined, theme: r.theme || undefined
@@ -912,27 +918,47 @@ function showAlert(msg) {
    --------------------------------------------------------------- */
 let metaIds = null;   // {page_id, ig_user_id, page_name}, resolved once per fetch
 
+/* Fields we ask Graph for per post/media: enough to build a title, a permalink
+   to open the post, and a thumbnail. */
+function metaPostFields(isFB) {
+  return isFB
+    ? 'id,message,created_time,permalink_url,full_picture'
+    : 'id,caption,timestamp,permalink,media_type,media_url,thumbnail_url';
+}
+
+/* One Graph post/media object -> our post shape {id,title,url,thumb}. IG videos
+   expose a still under thumbnail_url; images under media_url. */
+function mapMetaPost(pp, isFB) {
+  const title = ((isFB ? pp.message : pp.caption) || '(no caption)').replace(/\s+/g, ' ').slice(0, 60);
+  const url = (isFB ? pp.permalink_url : pp.permalink) || '';
+  const thumb = (isFB
+    ? pp.full_picture
+    : (pp.media_type === 'VIDEO' ? (pp.thumbnail_url || pp.media_url) : pp.media_url)) || '';
+  return { id: pp.id, title, url, thumb };
+}
+
 async function resolvePosts(source) {
   metaIds = await metaFetch(null, null, 'ids');
-  if (source.type === 'post') {
-    return [{ id: source.value, title: source.platform === 'facebook' ? 'Facebook post' : 'Instagram media' }];
-  }
   const isFB = source.platform === 'facebook';
+  if (source.type === 'post') {
+    let pp = { id: source.value };
+    try { pp = await metaFetch(source.value, { fields: metaPostFields(isFB) }); } catch { /* keep bare */ }
+    const post = mapMetaPost({ ...pp, id: pp.id || source.value }, isFB);
+    if (!post.title || post.title === '(no caption)') post.title = isFB ? 'Facebook post' : 'Instagram media';
+    return [post];
+  }
   const node = isFB ? metaIds.page_id : metaIds.ig_user_id;
   if (!node) throw new Error(isFB ? 'No Facebook Page is available for this token.'
                                   : 'No Instagram Business account is linked to your Page.');
   const edge = isFB ? 'posts' : 'media';
-  const fields = isFB ? 'id,message,created_time' : 'id,caption,timestamp';
+  const fields = metaPostFields(isFB);
   const out = [];
   let after = '';
   while (out.length < 300) {
     const params = { fields, limit: '25' };
     if (after) params.after = after;
     const r = await metaFetch(node + '/' + edge, params);
-    (r.data || []).forEach(pp => out.push({
-      id: pp.id,
-      title: ((isFB ? pp.message : pp.caption) || '(no caption)').replace(/\s+/g, ' ').slice(0, 60)
-    }));
+    (r.data || []).forEach(pp => out.push(mapMetaPost(pp, isFB)));
     after = r.paging?.cursors?.after || '';
     if (!r.paging?.next || !after) break;
   }
@@ -943,6 +969,7 @@ function mapMetaComment(it, post, isFB, isReply) {
   return {
     comment_id: it.id,
     video_id: post.id, video_title: post.title,
+    video_url: post.url || '', video_thumb: post.thumb || '',
     author: (isFB ? it.from?.name : it.username) || '',
     text: (isFB ? it.message : it.text) || '',
     date: (isFB ? it.created_time : it.timestamp) || '',
@@ -1159,13 +1186,35 @@ function renderChart() {
 function truncate(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
 function escapeHtml(s) { return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
+/* A comment's post link + thumbnail. Meta carries them explicitly; YouTube's
+   are derivable from the video id, so old runs and YT runs light up too. */
+function postMedia(c) {
+  if (c.video_url || c.video_thumb) return { url: c.video_url || '', thumb: c.video_thumb || '' };
+  if (currentSource && currentSource.platform === 'youtube' && c.video_id) {
+    return { url: 'https://www.youtube.com/watch?v=' + c.video_id,
+             thumb: 'https://i.ytimg.com/vi/' + c.video_id + '/mqdefault.jpg' };
+  }
+  return { url: '', thumb: '' };
+}
+function videoCell(c) {
+  const m = postMedia(c);
+  const title = escapeHtml(truncate(c.video_title, 40));
+  const label = m.url
+    ? '<a href="' + escapeHtml(m.url) + '" target="_blank" rel="noopener noreferrer">' + title + '</a>'
+    : title;
+  const thumb = m.thumb
+    ? '<img class="post-thumb" src="' + escapeHtml(m.thumb) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">'
+    : '';
+  return '<div class="post-cell">' + thumb + '<span>' + label + '</span></div>';
+}
+
 function renderTable() {
   const slice = filtered.slice(0, renderCount);
   $('tableBody').innerHTML = slice.map(c => `
     <tr>
       <td class="comment-text" data-label="Comment">${escapeHtml(truncate(c.text, 180))}${c.is_reply ? ' <span class="pill">reply</span>' : ''}${c.category ? ` <span class="tag ${c.category}">${c.category}</span>` : ''}</td>
       <td data-label="Author">${escapeHtml(c.author)}</td>
-      <td class="video-title" data-label="Video">${escapeHtml(truncate(c.video_title, 40))}</td>
+      <td class="video-title" data-label="Video">${videoCell(c)}</td>
       <td data-label="Likes">${c.likes}</td>
       <td data-label="Date">${c.date ? new Date(c.date).toLocaleDateString() : ''}</td>
     </tr>
@@ -1954,6 +2003,7 @@ const SharedStore = {
       if (cErr) throw cErr;
       (data || []).forEach(r => comments.push({
         video_id: r.video_id, video_title: r.video_title,
+        video_url: r.video_url || undefined, video_thumb: r.video_thumb || undefined,
         author: r.author, text: r.text, date: r.published_at,
         likes: r.likes, replies: r.reply_count, is_reply: r.is_reply,
         sentiment: r.sentiment || undefined, category: r.category || undefined, theme: r.theme || undefined
