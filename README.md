@@ -218,17 +218,33 @@ not built).
 
 ### One-time Meta setup
 
+> 📘 **Full beginner-friendly walkthrough:
+> [`docs/meta-setup/`](docs/meta-setup/README.md)** — every scenario, step by step,
+> in plain language (app + token, adding secrets, checking the token, the
+> multi-Page picker, sharing a Page across business portfolios, and a
+> troubleshooting table). Start there if any step below is unclear.
+
+Quick version:
+
 1. Create a **Business-type app** at [developers.facebook.com](https://developers.facebook.com);
-   add the *Facebook Login* + *Instagram Graph API* products, and make sure your
-   Instagram Business/Creator account is linked to the Facebook Page.
+   add the *Instagram* product, and make sure your Instagram Business/Creator account
+   is linked to the Facebook Page. ([details](docs/meta-setup/01-create-app.md))
 2. In **Meta Business Suite → Business Settings → System Users**, create a system
-   user and **generate a token** with `pages_read_engagement`,
-   `pages_read_user_content`, `pages_show_list`, `instagram_basic`,
-   `instagram_manage_comments`, assigned to your Page. A System User token
-   **never expires** — ideal for the nightly refresh.
+   user, **assign your app + Page + Instagram to it**, then **generate a token** with
+   `pages_read_engagement`, `pages_read_user_content`, `pages_show_list`,
+   `instagram_basic`, `instagram_manage_comments`. A System User token **never
+   expires** — ideal for the nightly refresh.
+   ([details](docs/meta-setup/02-system-user-and-token.md))
 3. Paste **`META_PAGE_TOKEN`** and **`META_PAGE_ID`** into *Supabase → Edge
    Functions → Secrets*. Until set, the Facebook/Instagram fetch returns a clear
    503 (and "use my own token" still works for a token you paste in the browser).
+   ([details](docs/meta-setup/03-add-secrets-to-supabase.md))
+
+**Multiple Pages / creators:** the Facebook & Instagram tabs show a **Page/creator
+dropdown** listing every Page assigned to the shared System User. To add one, assign
+it to the system user; if it lives in a **different business portfolio**, partner-share
+it in first. See [choosing a Page](docs/meta-setup/05-choose-which-page.md) and
+[a Page in another portfolio](docs/meta-setup/06-a-page-in-another-portfolio.md).
 
 The token is held server-side by the `meta-proxy` edge function (allowlist-gated,
 just like the YouTube proxy) and never reaches the browser. The same

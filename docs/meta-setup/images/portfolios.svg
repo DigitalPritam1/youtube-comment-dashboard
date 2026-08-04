@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 300" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <style>
+    .box{fill:#ffffff;stroke:#d0d7de;stroke-width:1.5;}
+    .boxg{fill:#eef6f0;stroke:#2E7D4F;stroke-width:1.5;}
+    .chip{fill:#f6f8fa;stroke:#d0d7de;stroke-width:1.2;}
+    .h{fill:#1f2328;font-size:15px;font-weight:800;}
+    .s{fill:#57606a;font-size:12px;}
+    .c{fill:#1f2328;font-size:13px;font-weight:600;}
+    .arrow{stroke:#2E7D4F;stroke-width:2.5;fill:none;}
+    .lbl{fill:#2E7D4F;font-size:12px;font-weight:800;}
+  </style>
+  <defs>
+    <marker id="ag" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#2E7D4F"/>
+    </marker>
+  </defs>
+
+  <!-- left portfolio -->
+  <rect x="20" y="70" width="300" height="180" rx="14" class="box"/>
+  <text x="40" y="100" class="h">Portfolio A</text>
+  <text x="40" y="120" class="s">e.g. “indianfarmermarathi”</text>
+  <rect x="40" y="150" width="260" height="70" rx="10" class="chip"/>
+  <text x="58" y="180" class="c">📘 Santosh Jadhav’s Page</text>
+  <text x="58" y="202" class="s">lives here — but the key can’t see it yet</text>
+
+  <!-- right portfolio -->
+  <rect x="600" y="70" width="300" height="180" rx="14" class="boxg"/>
+  <text x="620" y="100" class="h">Portfolio B</text>
+  <text x="620" y="120" class="s">e.g. “Indian Farmer” (ID 1013680917041024)</text>
+  <rect x="620" y="150" width="260" height="40" rx="10" class="chip"/>
+  <text x="638" y="175" class="c">🤖 dashboard-bot  — holds the key 🔑</text>
+  <rect x="620" y="196" width="260" height="40" rx="10" class="chip"/>
+  <text x="638" y="221" class="c">📘 Santosh’s Page (shared in → assign it)</text>
+
+  <!-- step 1 arrow across -->
+  <path d="M320 175 C440 175, 480 175, 596 172" class="arrow" marker-end="url(#ag)"/>
+  <text x="360" y="150" class="lbl">Step 1: Partner-share the Page →</text>
+
+  <!-- step 2 arrow inside right box -->
+  <path d="M750 190 L750 196" class="arrow" marker-end="url(#ag)"/>
+  <text x="360" y="280" class="lbl">Step 2: inside Portfolio B, assign the shared Page to dashboard-bot.</text>
+</svg>

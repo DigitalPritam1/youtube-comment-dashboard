@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 250" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <style>
+    .card{fill:#ffffff;stroke:#d0d7de;stroke-width:1.5;rx:12;}
+    .t{fill:#1f2328;font-size:15px;font-weight:700;}
+    .s{fill:#57606a;font-size:12px;}
+    .num{fill:#2E7D4F;font-size:13px;font-weight:800;}
+    .arrow{stroke:#57606a;stroke-width:2.5;fill:none;}
+    .lbl{fill:#2E7D4F;font-size:11px;font-weight:700;}
+  </style>
+  <defs>
+    <marker id="a" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#57606a"/>
+    </marker>
+  </defs>
+
+  <rect x="14"  y="60" width="190" height="96" rx="12" class="card"/>
+  <text x="30" y="86" class="num">1</text>
+  <text x="30" y="106" class="t">The Dashboard 📊</text>
+  <text x="30" y="128" class="s">You open it and click</text>
+  <text x="30" y="144" class="s">“Fetch comments”.</text>
+
+  <rect x="246" y="60" width="190" height="96" rx="12" class="card"/>
+  <text x="262" y="86" class="num">2</text>
+  <text x="262" y="106" class="t">Supabase safe 🔒</text>
+  <text x="262" y="128" class="s">Keeps your secret</text>
+  <text x="262" y="144" class="s">“key” hidden.</text>
+
+  <rect x="478" y="60" width="190" height="96" rx="12" class="card"/>
+  <text x="494" y="86" class="num">3</text>
+  <text x="494" y="106" class="t">Your key 🔑</text>
+  <text x="494" y="128" class="s">Unlocks your Page</text>
+  <text x="494" y="144" class="s">+ Instagram at Meta.</text>
+
+  <rect x="710" y="60" width="196" height="96" rx="12" class="card"/>
+  <text x="726" y="86" class="num">4</text>
+  <text x="726" y="106" class="t">Facebook + IG</text>
+  <text x="726" y="128" class="s">The comments live</text>
+  <text x="726" y="144" class="s">here. They come back.</text>
+
+  <line x1="206" y1="108" x2="242" y2="108" class="arrow" marker-end="url(#a)"/>
+  <line x1="438" y1="108" x2="474" y2="108" class="arrow" marker-end="url(#a)"/>
+  <line x1="670" y1="108" x2="706" y2="108" class="arrow" marker-end="url(#a)"/>
+
+  <path d="M808 156 C808 210, 110 210, 110 160" class="arrow" marker-end="url(#a)"/>
+  <text x="405" y="205" class="lbl">the comments travel back to your dashboard →</text>
+</svg>
