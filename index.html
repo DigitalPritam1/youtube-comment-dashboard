@@ -87,6 +87,12 @@
     transition:border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
   }
   input[type=text]:focus,input[type=password]:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring);}
+  #metaPageField{margin-bottom:14px;}
+  #metaPageField select{
+    width:100%;padding:14px 16px;border:1px solid var(--border-strong);border-radius:var(--r-sm);
+    background:var(--field);color:var(--text);font-size:14px;font-family:var(--sans);cursor:pointer;
+  }
+  #metaPageField select:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring);}
   .row{display:grid;grid-template-columns:1.3fr 1.7fr auto;gap:14px;align-items:end;}
   @media(max-width:700px){.row{grid-template-columns:1fr;}}
   button{
@@ -280,6 +286,10 @@
       <button data-platform="youtube" aria-pressed="true">YouTube</button>
       <button data-platform="facebook" aria-pressed="false">Facebook</button>
       <button data-platform="instagram" aria-pressed="false">Instagram</button>
+    </div>
+    <div id="metaPageField" style="display:none;">
+      <label for="metaPageSelect" id="metaPageLabel">Page / creator</label>
+      <select id="metaPageSelect"></select>
     </div>
     <div class="row">
       <div>
@@ -666,6 +676,8 @@ const usingProxy = () => Api.mode === 'proxy' && !!session;
    --------------------------------------------------------------- */
 let platform = 'youtube';
 const isMeta = (p) => p === 'facebook' || p === 'instagram';
+let metaPages = [];        // [{page_id,page_name,ig_user_id,ig_username}] the token manages
+let metaCtxPageId = '';    // Page the current Meta op acts on ('' = server default)
 const PLATFORM_CFG = {
   youtube: {
     sourceLabel: 'Channel, playlist, or video',
@@ -705,6 +717,31 @@ async function applyPlatform(p) {
   $('apiKeyInput').value = savedKey;
   if (Api.mode === 'own') $('apiKeyInput').placeholder = cfg.keyPlaceholder;
   await Settings.set('platform', p);
+  await loadMetaPages();
+}
+
+/* Populate the Page/creator picker from every Page the shared System User token
+   manages. Only shown for Meta on the shared server token — own-key mode keeps
+   the single-account behaviour. On Instagram, only Pages with a linked IG. */
+async function loadMetaPages() {
+  const field = $('metaPageField'), sel = $('metaPageSelect');
+  if (!isMeta(platform) || !usingProxy()) { field.style.display = 'none'; return; }
+  try {
+    const r = await metaFetch(null, null, 'pages');
+    metaPages = r.pages || [];
+  } catch (e) { metaPages = []; }
+  const wantIg = platform === 'instagram';
+  const eligible = metaPages.filter(p => !wantIg || p.ig_user_id);
+  if (!eligible.length) {
+    sel.innerHTML = `<option value="">${wantIg ? 'No Pages with a linked Instagram' : 'No Pages assigned to the token'}</option>`;
+    field.style.display = 'block';
+    return;
+  }
+  sel.innerHTML = eligible.map(p =>
+    `<option value="${escapeHtml(p.page_id)}">${escapeHtml(p.page_name)}` +
+    `${wantIg && p.ig_username ? ' (@' + escapeHtml(p.ig_username) + ')' : ''}</option>`
+  ).join('');
+  field.style.display = 'block';
 }
 
 document.querySelectorAll('#platformTabs button').forEach(btn =>
@@ -746,7 +783,9 @@ async function metaFetch(endpoint, params, action) {
     const res = await fetch(SUPABASE_URL + '/functions/v1/meta-proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
-      body: JSON.stringify(action ? { action } : { endpoint, params })
+      body: JSON.stringify(action
+        ? { action, page_id: metaCtxPageId || undefined }
+        : { endpoint, params, page_id: metaCtxPageId || undefined })
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { const e = new Error(data.error?.message || 'Meta API error'); e.status = res.status; throw e; }
@@ -1018,6 +1057,7 @@ async function getCommentsForPost(post, source, since) {
 }
 
 async function metaHarvest(source, since) {
+  metaCtxPageId = source.metaPageId || '';   // '' -> proxy uses the server default Page
   setProgress(6, source.platform === 'facebook' ? 'Listing Facebook posts…' : 'Listing Instagram media…');
   const posts = await resolvePosts(source);
   if (!posts.length) throw new Error('No posts found for your account.');
@@ -1087,6 +1127,17 @@ async function runFetch() {
   let source;
   try { source = parseSource(raw, platform); }
   catch (e) { showAlert(e.message); return; }
+
+  // Attach the picked Page/creator so the fetch (and later refresh) target it.
+  if (isMeta(platform) && source.type === 'account' && usingProxy()) {
+    const chosen = metaPages.find(p => p.page_id === $('metaPageSelect').value);
+    if (chosen) {
+      source.metaPageId = chosen.page_id;
+      source.value = chosen.page_id;   // persisted with the run so refresh knows the Page
+      source.label = (platform === 'instagram' && chosen.ig_username)
+        ? '@' + chosen.ig_username : chosen.page_name;
+    }
+  }
 
   currentSource = source;
   Api.key = apiKey;
@@ -1284,7 +1335,9 @@ async function loadRun(id) {
 function sourceFromRun(run) {
   const platform = run.platform || 'youtube';
   if (platform === 'facebook' || platform === 'instagram') {
-    return { platform, type: run.sourceType, value: run.sourceValue || '', label: run.sourceLabel };
+    // For an account run, sourceValue holds the picked Page id; carry it as metaPageId.
+    return { platform, type: run.sourceType, value: run.sourceValue || '', label: run.sourceLabel,
+             metaPageId: run.sourceType === 'account' ? (run.sourceValue || '') : '' };
   }
   let value = run.sourceValue || '';
   if (!value) {
@@ -1904,6 +1957,7 @@ async function applyKeyMode(mode) {
   $('apiKeyInput').placeholder = own ? (PLATFORM_CFG[platform]?.keyPlaceholder || 'Paste your key') : 'Using the shared server token';
   document.querySelectorAll('[name=keysrc]').forEach(r => { r.checked = r.value === mode; });
   await Settings.set('yt_key_mode', mode);
+  await loadMetaPages();
 }
 
 function updateAuthUI() {

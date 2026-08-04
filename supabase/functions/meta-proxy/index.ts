@@ -125,27 +125,68 @@ Deno.serve(async (req: Request) => {
     }, 503, origin);
   }
 
-  let payload: { action?: string; endpoint?: string; params?: Record<string, string> };
+  let payload: {
+    action?: string; endpoint?: string;
+    params?: Record<string, string>; page_id?: string;
+  };
   try {
     payload = await req.json();
   } catch {
     return json({ error: { message: "Body must be JSON." } }, 400, origin);
   }
 
-  // Every Graph read below uses the Page access token, exchanged from the
-  // stored System User token. (No-op if the stored token is already a Page token.)
-  const graphToken = await resolvePageToken(pageId, pageToken);
+  // --- list every Page this System User token manages (for the picker) ---
+  // Uses the seed (user-context) token; /me/accounts needs it, not a Page token.
+  // No Page access tokens are returned to the browser.
+  if (payload.action === "pages") {
+    try {
+      const out: {
+        page_id: string; page_name: string;
+        ig_user_id: string | null; ig_username: string | null;
+      }[] = [];
+      let next: string | null =
+        `${GRAPH}me/accounts?fields=id,name,instagram_business_account{id,username}` +
+        `&limit=100&access_token=${encodeURIComponent(pageToken)}`;
+      while (next && out.length < 200) {
+        const r = await fetch(next);
+        const d: any = await r.json();
+        if (!r.ok) throw new Error(d?.error?.message || "Could not list Pages.");
+        for (const p of (d.data ?? []) as any[]) {
+          out.push({
+            page_id: p.id,
+            page_name: p.name ?? p.id,
+            ig_user_id: p.instagram_business_account?.id ?? null,
+            ig_username: p.instagram_business_account?.username ?? null,
+          });
+        }
+        next = d.paging?.next ?? null;   // paging URLs already carry the token
+      }
+      return json({ pages: out }, 200, origin);
+    } catch (e) {
+      return json({ error: { message: (e as Error).message } }, 502, origin);
+    }
+  }
 
-  // --- resolve the owner's Page id + linked Instagram id (one round trip) ---
+  // Which Page are we acting on? Default to the configured one; the picker sends
+  // an explicit page_id for any other Page assigned to the System User.
+  const targetPageId = (typeof payload.page_id === "string" && /^\d+$/.test(payload.page_id))
+    ? payload.page_id
+    : pageId;
+
+  // Content edges need the *Page* token, exchanged from the stored System User
+  // token. (No-op if the stored token is already a Page token.)
+  const graphToken = await resolvePageToken(targetPageId, pageToken);
+
+  // --- resolve the target Page's id + linked Instagram id (one round trip) ---
   if (payload.action === "ids") {
     try {
       const r = await fetch(
-        `${GRAPH}${pageId}?fields=instagram_business_account,name&access_token=${encodeURIComponent(graphToken)}`,
+        `${GRAPH}${targetPageId}?fields=instagram_business_account,name&access_token=${encodeURIComponent(graphToken)}`,
       );
       const data = await r.json();
       if (!r.ok) throw new Error(data?.error?.message || "Could not read the Page.");
       return json({
-        page_id: pageId,
+        page_id: targetPageId,
         page_name: data?.name ?? null,
         ig_user_id: data?.instagram_business_account?.id ?? null,
       }, 200, origin);
