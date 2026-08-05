@@ -993,8 +993,10 @@ async function resolvePosts(source) {
   const fields = metaPostFields(isFB);
   const out = [];
   let after = '';
-  while (out.length < 300) {
-    const params = { fields, limit: '25' };
+  // Page through every post/media on the account. The cap is a runaway safety
+  // bound only, well above any real account; paging stops naturally at the end.
+  while (out.length < 20000) {
+    const params = { fields, limit: '100' };
     if (after) params.after = after;
     const r = await metaFetch(node + '/' + edge, params);
     (r.data || []).forEach(pp => out.push(mapMetaPost(pp, isFB)));
