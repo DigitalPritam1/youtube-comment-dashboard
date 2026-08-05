@@ -555,6 +555,23 @@ const CloudRunStore = {
       videoStats: run.video_stats || [], comments
     };
   },
+  /* Upserts one chunk, retrying transient failures (network blips, a gateway
+     timing out a big batch) with backoff before giving up. Upsert-on-conflict
+     (run_id, comment_id) makes a retry safe even if a prior attempt's chunk
+     partly landed server-side before the client saw an error. */
+  async _uploadChunk(rows, attempts = 4) {
+    for (let n = 1; n <= attempts; n++) {
+      try {
+        const { error } = await sb.from('comments')
+          .upsert(rows, { onConflict: 'run_id,comment_id', ignoreDuplicates: true });
+        if (!error) return;
+        if (n === attempts) throw error;
+      } catch (e) {
+        if (n === attempts) throw e;
+      }
+      await new Promise(res => setTimeout(res, 500 * 2 ** (n - 1)));   // 0.5s, 1s, 2s
+    }
+  },
   async save(run) {
     const userId = session.user.id;
     const { data, error } = await sb.from('runs').insert({
@@ -568,38 +585,66 @@ const CloudRunStore = {
 
     const runId = data.id;
     const shareToken = data.share_token;
-    const CHUNK = 500;
+    const CHUNK = 1000;
+    let uploaded = 0;
+    let failure = null;
     for (let i = 0; i < run.comments.length; i += CHUNK) {
       const rows = run.comments.slice(i, i + CHUNK).map(c => this._toDb(c, runId, userId));
-      const { error: cErr } = await sb.from('comments').insert(rows);
-      if (cErr) {
-        // Don't leave a run row pointing at half its comments.
-        await sb.from('runs').delete().eq('id', runId);
-        throw cErr;
+      try {
+        await this._uploadChunk(rows);
+        uploaded += rows.length;
+      } catch (e) {
+        failure = e;   // stop, but keep what already made it in — see below
+        break;
       }
       if (run.comments.length > CHUNK) {
         setProgress(Math.round((i / run.comments.length) * 100), `Uploading ${i}/${run.comments.length}…`);
       }
     }
+    // A run row pointing at a partial set of comments is still a valid, usable
+    // run (not the data-destroying half-write this used to be) — record what
+    // truly landed rather than either the original claim or nothing at all.
+    await sb.from('runs').update({
+      total_comments: uploaded, total_videos: run.videoStats.length, video_stats: run.videoStats
+    }).eq('id', runId);
+    if (failure) {
+      const err = new Error(
+        `Saved ${uploaded.toLocaleString()} of ${run.comments.length.toLocaleString()} comments, ` +
+        `then hit a persistent error (${failure.message || failure}). The run is kept with what ` +
+        `made it in — click Save again to add the rest; already-saved comments won't be duplicated.`
+      );
+      err.partial = true; err.runId = runId; err.shareToken = shareToken;
+      throw err;
+    }
     return { id: runId, shareToken };
   },
-  /* Refresh only ever adds comments, so insert the new rows and update the
+  /* Refresh only ever adds comments, so upsert the new rows and update the
      run's totals rather than rewriting every row. */
   async appendComments(runId, fresh, videoStats, total) {
     const userId = session.user.id;
-    const CHUNK = 500;
+    const CHUNK = 1000;
+    let uploaded = 0;
+    let failure = null;
     for (let i = 0; i < fresh.length; i += CHUNK) {
       const rows = fresh.slice(i, i + CHUNK).map(c => this._toDb(c, runId, userId));
-      const { error } = await sb.from('comments').insert(rows);
-      if (error) throw error;
+      try { await this._uploadChunk(rows); uploaded += rows.length; }
+      catch (e) { failure = e; break; }
     }
     const { error: uErr } = await sb.from('runs').update({
-      total_comments: total,
+      total_comments: total - (fresh.length - uploaded),
       total_videos: videoStats.length,
       video_stats: videoStats,
       newest_comment_at: fresh.reduce((m, c) => (c.date && c.date > m ? c.date : m), ''),
     }).eq('id', runId);
     if (uErr) throw uErr;
+    if (failure) {
+      const err = new Error(
+        `Added ${uploaded.toLocaleString()} of ${fresh.length.toLocaleString()} new comments, then hit a ` +
+        `persistent error (${failure.message || failure}). Click Refresh again to pick up the rest.`
+      );
+      err.partial = true;
+      throw err;
+    }
   },
   async setAutoRefresh(id, on) {
     const { error } = await sb.from('runs').update({ auto_refresh: on }).eq('id', id);
@@ -1335,7 +1380,15 @@ async function saveCurrentRun() {
       showAlert(session ? 'Saved.' : 'Saved on this device. Sign in to get a shareable link.');
     }
   } catch (e) {
-    showAlert('Could not save run: ' + (e.message || e));
+    if (e.partial) {
+      // Most or all of the data made it in — this is not the total loss a plain
+      // error looks like, so surface the run instead of hiding it.
+      if (session && e.runId) currentRunId = e.runId;
+      await renderRuns();
+      showAlert(e.message);
+    } else {
+      showAlert('Could not save run: ' + (e.message || e));
+    }
   } finally {
     $('saveRunBtn').disabled = false;
   }
