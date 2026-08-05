@@ -415,6 +415,24 @@ const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_Fb5vTDz7dWlfk2-l7i4LAg_XRlCYwH2
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 let session = null;
 
+/* A full account pull (thousands of posts) can run well past the sign-in
+   token's ~1 hour lifetime. supabase-js auto-refreshes in the background, but
+   a backgrounded/throttled tab can miss the window and leave `session` stale
+   right when a proxy call needs it. Call this before every proxied request:
+   refreshes ahead of expiry so the call goes out with a live token instead of
+   failing mid-run with "Invalid or expired session." */
+let refreshingSession = null;
+async function ensureFreshSession() {
+  if (!session) return;
+  const expiresInMs = (session.expires_at ? session.expires_at * 1000 : 0) - Date.now();
+  if (expiresInMs > 5 * 60 * 1000) return;   // still good for 5+ minutes
+  if (!refreshingSession) {
+    refreshingSession = sb.auth.refreshSession().finally(() => { refreshingSession = null; });
+  }
+  const { data, error } = await refreshingSession;
+  if (!error && data?.session) session = data.session;   // onAuthStateChange also updates it
+}
+
 /* ---------------------------------------------------------------
    Storage. Both stores expose the same async shape, so `store()`
    can swap between device-local and cloud without call sites caring.
@@ -747,9 +765,10 @@ async function loadMetaPages() {
 document.querySelectorAll('#platformTabs button').forEach(btn =>
   btn.addEventListener('click', () => applyPlatform(btn.dataset.platform)));
 
-async function ytFetch(endpoint, params) {
+async function ytFetch(endpoint, params, _retried) {
   let res, data;
   if (usingProxy()) {
+    await ensureFreshSession();
     res = await fetch(SUPABASE_URL + '/functions/v1/yt-proxy', {
       method: 'POST',
       headers: {
@@ -758,6 +777,10 @@ async function ytFetch(endpoint, params) {
       },
       body: JSON.stringify({ endpoint, params })
     });
+    if (res.status === 401 && !_retried) {
+      const { error } = await sb.auth.refreshSession();
+      if (!error) return ytFetch(endpoint, params, true);
+    }
   } else {
     const url = new URL('https://www.googleapis.com/youtube/v3/' + endpoint);
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
@@ -778,8 +801,9 @@ const GRAPH_URL = 'https://graph.facebook.com/v21.0/';
 /* Mirrors ytFetch: proxy through meta-proxy with the shared token, else call
    the Graph API directly with the pasted token. `action:'ids'` resolves the
    owner's Page + linked Instagram account. */
-async function metaFetch(endpoint, params, action) {
+async function metaFetch(endpoint, params, action, _retried) {
   if (usingProxy()) {
+    await ensureFreshSession();
     const res = await fetch(SUPABASE_URL + '/functions/v1/meta-proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
@@ -787,6 +811,10 @@ async function metaFetch(endpoint, params, action) {
         ? { action, page_id: metaCtxPageId || undefined }
         : { endpoint, params, page_id: metaCtxPageId || undefined })
     });
+    if (res.status === 401 && !_retried) {
+      const { error } = await sb.auth.refreshSession();
+      if (!error) return metaFetch(endpoint, params, action, true);
+    }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { const e = new Error(data.error?.message || 'Meta API error'); e.status = res.status; throw e; }
     return data;
