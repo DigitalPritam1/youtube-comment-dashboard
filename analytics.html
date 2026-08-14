@@ -298,12 +298,13 @@
       </div>
       <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap;">
         <button id="collectBtn">Collect snapshot</button>
+        <button id="deepCollectBtn" class="ghost" title="Fetch real lifetime views for every Meta post — takes 15–30 minutes for large accounts. Keep this tab open.">Deep collect (lifetime views)</button>
         <button id="exportBtn" class="ghost">Export to Excel…</button>
         <button id="exportCsvBtn" class="ghost">Export CSV</button>
         <button id="exportPdfBtn" class="ghost">Export PDF</button>
       </div>
       <div class="alert" id="collectAlert"></div>
-      <p class="hint">Views on Facebook and Instagram are counted for <b>video posts and reels only</b>, because pulling per-photo view counts needs one extra API call per post. YouTube views are the real lifetime channel total.</p>
+      <p class="hint"><b>Views:</b> YouTube shows real lifetime channel views. Facebook and Instagram views are blank on a normal snapshot — run <b>Deep collect</b> once per account to pull true lifetime views (sums per-post impressions across every post, one API call each). Cached in the DB, so subsequent snapshots stay fast; re-run only when you want a fresh number.</p>
     </div>
 
     <div class="card">
@@ -960,6 +961,229 @@ function setProgress(pct, txt) {
   $('progressFill').style.width = pct + '%';
   if (txt) $('progressLog').textContent = txt;
 }
+
+/* ---------- deep-collect: real lifetime views per Meta post/media ----------
+   Runs one insights API call per post/media. For a large Page (2500+ posts)
+   this is ~10 minutes per source; per-post results are cached in
+   analytics_post_views so a browser crash / tab close doesn't lose progress and
+   a re-run only picks up posts not yet cached. */
+
+const sleep = ms => new Promise(res => setTimeout(res, ms));
+
+/* Look up the parent FB Page id for an IG source, so meta-proxy can derive the
+   Page access token IG insights require. FB sources use their own source_id. */
+function parentPageId(source) {
+  if (source.platform === 'facebook') return source.source_id;
+  if (source.platform === 'instagram') {
+    const pg = (metaPagesCache || []).find(p => p.ig_user_id === source.source_id);
+    return pg?.page_id || '';
+  }
+  return '';
+}
+
+/* One insights call → a single lifetime view number. FB uses post_impressions
+   (works for every post type). IG media types accept different metrics
+   depending on when the media was created; try the modern one first, fall
+   through on error. Returns null if none of the metrics were accepted. */
+async function fetchPostViews(postId, platform, pageIdForToken) {
+  const metrics = platform === 'facebook'
+    ? ['post_impressions']
+    // Meta deprecated 'impressions' for IG media created after 2024-07;
+    // 'views' is the newer unified metric, 'plays' works for older reels,
+    // 'impressions' still works for pre-2024 images.
+    : ['views', 'impressions', 'plays', 'video_views'];
+  let last429 = false;
+  for (const metric of metrics) {
+    try {
+      const r = await metaFetch(postId + '/insights', { metric }, null, pageIdForToken);
+      const v = r?.data?.[0]?.values?.[0]?.value;
+      if (typeof v === 'number') return v;
+      // Some IG responses return an empty data[] instead of an error for
+      // unsupported metrics on a given media type — just try the next one.
+    } catch (e) {
+      if (e.status === 429) { last429 = true; break; }
+      // Any other error (unsupported metric, deleted post) → try the next one.
+    }
+  }
+  if (last429) { const err = new Error('rate-limit'); err.status = 429; throw err; }
+  return null;
+}
+
+/* Deep-collect one Meta source: page through every post/media (cheap, ID only),
+   fetch insights for every one not yet cached (expensive, one call each),
+   upsert into cache, sum, insert a fresh snapshot with the true lifetime view
+   number. onProgress({ phase, done, total, note }) is called continuously so
+   the UI can keep a running commentary. */
+async function deepCollectSource(source, onProgress) {
+  const isFB = source.platform === 'facebook';
+  const pageToken = parentPageId(source);
+  if (!pageToken) throw new Error('No parent Page found for this source (Instagram needs a linked Page).');
+  const edge = isFB ? '/posts' : '/media';
+
+  onProgress({ phase: 'listing', done: 0, total: 0, note: 'Listing posts…' });
+
+  // --- 1. Page through everything, capturing just the post/media IDs. ---
+  const allIds = [];
+  let after = '';
+  while (true) {
+    const params = { fields: 'id,created_time,timestamp', limit: '100' };
+    if (after) params.after = after;
+    const r = await metaFetch(source.source_id + edge, params, null, pageToken);
+    for (const p of (r.data || [])) allIds.push(p.id);
+    onProgress({ phase: 'listing', done: allIds.length, total: 0, note: `Listing posts — ${allIds.length} so far` });
+    after = r.paging?.cursors?.after || '';
+    if (!r.paging?.next || !after) break;
+    if (allIds.length > 30000) break;   // hard safety
+  }
+
+  // --- 2. Load cache to skip already-fetched posts. Deep collect is resumable. ---
+  const cachedRows = await sb.from('analytics_post_views')
+    .select('post_id,views').eq('source_id', source.id);
+  if (cachedRows.error) throw cachedRows.error;
+  const cachedIds = new Set((cachedRows.data || []).map(r => r.post_id));
+  const cachedViewSum = (cachedRows.data || []).reduce((s, r) => s + (r.views || 0), 0);
+
+  const todo = allIds.filter(id => !cachedIds.has(id));
+  let done = cachedIds.size;
+  let sumNew = 0;
+  let failures = 0;
+  onProgress({ phase: 'insights', done, total: allIds.length,
+    note: `${cachedIds.size} cached, ${todo.length} to fetch` });
+
+  // --- 3. Fetch insights per post, upsert as we go so a crash keeps progress. ---
+  const CHUNK = 20;   // upsert in small batches to keep DB writes cheap
+  let batch = [];
+  const flush = async () => {
+    if (!batch.length) return;
+    await sb.from('analytics_post_views').upsert(batch, { onConflict: 'source_id,post_id' });
+    batch = [];
+  };
+
+  let rateLimitBackoff = 60_000;   // starts at 60s, doubles on each 429
+  for (let i = 0; i < todo.length; i++) {
+    const postId = todo[i];
+    let views = null;
+    let retries = 0;
+    while (retries < 3) {
+      try {
+        views = await fetchPostViews(postId, source.platform, pageToken);
+        break;
+      } catch (e) {
+        if (e.status === 429 && retries < 2) {
+          onProgress({ phase: 'insights', done, total: allIds.length,
+            note: `Rate-limited — waiting ${Math.round(rateLimitBackoff/1000)}s before retrying (post ${done + 1}/${allIds.length})` });
+          await sleep(rateLimitBackoff);
+          rateLimitBackoff = Math.min(rateLimitBackoff * 2, 15 * 60_000);
+          retries++;
+          continue;
+        }
+        views = null;
+        break;
+      }
+    }
+    if (views == null) failures++;
+    else sumNew += views;
+    batch.push({
+      source_id: source.id, post_id: postId,
+      views: views, collected_at: new Date().toISOString()
+    });
+    done++;
+    if (batch.length >= CHUNK) await flush();
+    if (done % 10 === 0 || i === todo.length - 1) {
+      const runningTotal = cachedViewSum + sumNew;
+      onProgress({ phase: 'insights', done, total: allIds.length,
+        note: `${done.toLocaleString()}/${allIds.length.toLocaleString()} posts — ${fmtCompact(runningTotal)} views so far` +
+              (failures ? ` (${failures} unavailable)` : '') });
+    }
+    // Modest throttle so we don't hammer the API. 100ms → ~600/min max, well
+    // under Meta's per-user hourly ceiling on any healthy app.
+    await sleep(100);
+  }
+  await flush();
+
+  // --- 4. Sum views from cache and write a fresh snapshot. ---
+  const finalRows = await sb.from('analytics_post_views')
+    .select('views').eq('source_id', source.id);
+  const totalViews = (finalRows.data || []).reduce((s, r) => s + (r.views || 0), 0);
+
+  const currentTotals = lastSnapshot[source.id]?.totals || {};
+  const merged = {
+    ...currentTotals,
+    views: totalViews,
+    _deep: true,
+    _postsScanned: allIds.length,
+    _note: (failures ? `${failures} of ${allIds.length} posts returned no view data` : '')
+  };
+  const { data } = await sb.from('analytics_snapshots')
+    .insert({ source_id: source.id, totals: merged }).select('captured_at').single();
+  lastSnapshot[source.id] = {
+    source_id: source.id, totals: merged,
+    captured_at: data?.captured_at || new Date().toISOString()
+  };
+  return { totalViews, postsScanned: allIds.length, failures };
+}
+
+let deepRunning = false;
+$('deepCollectBtn').addEventListener('click', async () => {
+  if (deepRunning || collecting) return;
+  const metaSources = sources.filter(s => s.platform === 'facebook' || s.platform === 'instagram');
+  if (!metaSources.length) { showAlert('collectAlert', 'No Facebook or Instagram sources to deep-collect.'); return; }
+
+  // Ensure the parent-Page lookup table is loaded (IG sources need it).
+  await loadMetaPagesOnce();
+
+  const est = metaSources.length * 10;
+  const ok = confirm(
+    `Deep collect will fetch real lifetime views for every post on ${metaSources.length} Meta source${metaSources.length===1?'':'s'}.\n\n` +
+    `• Estimated time: ${est}–${est*2} minutes for large accounts (one API call per post).\n` +
+    `• KEEP THIS TAB OPEN. Closing it pauses the run.\n` +
+    `• Progress is saved after every post — if you close and re-open, clicking Deep collect again resumes where it left off (already-fetched posts are skipped).\n\n` +
+    `Continue?`
+  );
+  if (!ok) return;
+
+  deepRunning = true;
+  $('deepCollectBtn').disabled = true;
+  $('collectBtn').disabled = true;
+  $('progressWrap').style.display = 'block';
+  showAlert('collectAlert', '');
+  const startedAt = Date.now();
+
+  let sourceIdx = 0;
+  const results = [];
+  for (const s of metaSources) {
+    sourceIdx++;
+    const label = `[${sourceIdx}/${metaSources.length}] ${s.brand} · ${s.platform}`;
+    setBreakdownStatus(s.id, 'Deep collecting…');
+    try {
+      const r = await deepCollectSource(s, (p) => {
+        // Combined progress: how far through the total sources + this source's own progress.
+        const perSourcePct = p.total ? p.done / p.total : 0;
+        const overall = ((sourceIdx - 1) + perSourcePct) / metaSources.length;
+        setProgress(Math.round(overall * 100), `${label} — ${p.note}`);
+      });
+      results.push({ s, ...r, ok: true });
+      setBreakdownStatus(s.id, 'ok');
+    } catch (e) {
+      results.push({ s, ok: false, error: e.message || String(e) });
+      setBreakdownStatus(s.id, 'err', e.message || String(e));
+    }
+    renderBreakdown();
+  }
+
+  const mins = Math.round((Date.now() - startedAt) / 60000);
+  const okCount = results.filter(r => r.ok).length;
+  setProgress(100, `Deep collect done in ${mins} min — ${okCount}/${results.length} source${results.length===1?'':'s'} updated`);
+  showAlert('collectAlert',
+    `Deep collect finished. ${okCount} source${okCount===1?'':'s'} updated with real lifetime views` +
+    (results.some(r => !r.ok) ? ` · ${results.length - okCount} failed (hover any red row for the reason)` : '') +
+    `. Data cached — normal snapshots stay fast; re-run to refresh.`,
+    okCount === results.length);
+
+  deepRunning = false;
+  $('deepCollectBtn').disabled = false;
+  $('collectBtn').disabled = false;
+});
 
 /* ---------- table + tiles ---------- */
 

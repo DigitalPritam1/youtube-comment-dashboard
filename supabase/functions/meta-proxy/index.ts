@@ -27,7 +27,7 @@ const ALLOWED_ORIGINS = [
 // A Graph path is either a bare node ("{id}" / "me") or "{id}/{edge}". Only
 // these read edges are permitted, so the proxy can't be repurposed to reach
 // arbitrary Graph endpoints (e.g. publishing, messaging).
-const ALLOWED_EDGES = new Set(["posts", "feed", "comments", "media"]);
+const ALLOWED_EDGES = new Set(["posts", "feed", "comments", "media", "insights"]);
 
 function endpointOk(ep: string): boolean {
   const clean = ep.replace(/^\/+|\/+$/g, "");
