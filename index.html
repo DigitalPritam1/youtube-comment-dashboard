@@ -151,9 +151,13 @@
   .platform-tabs button{background:transparent;color:var(--text-sec);border:none;border-radius:9px;padding:8px 16px;font-size:13px;font-weight:600;box-shadow:none;transition:color var(--dur) var(--ease),background var(--dur) var(--ease),box-shadow var(--dur) var(--ease);}
   .platform-tabs button:hover:not([aria-pressed="true"]){color:var(--text);transform:none;filter:none;}
   .platform-tabs button[aria-pressed="true"]{background:var(--bg-elev);color:var(--accent);box-shadow:var(--shadow-sm);}
-  .pbadge{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.03em;padding:2px 7px;border-radius:6px;margin-right:8px;vertical-align:middle;}
-  .pbadge.youtube{background:rgba(192,64,47,.15);color:var(--danger);}
-  .pbadge.facebook{background:rgba(37,99,235,.15);color:#3b82f6;}
+  /* Platform badge — Font Awesome brand SVG icon inside a color-tinted pill. */
+  .pbadge{display:inline-flex;align-items:center;justify-content:center;
+    width:22px;height:22px;padding:0;border-radius:7px;margin-right:8px;
+    vertical-align:middle;flex-shrink:0;}
+  .pbadge svg{width:12px;height:12px;display:block;}
+  .pbadge.youtube  {background:rgba(192,64,47,.15);color:var(--danger);}
+  .pbadge.facebook {background:rgba(37,99,235,.15);color:#3b82f6;}
   .pbadge.instagram{background:rgba(214,41,118,.15);color:#e0559a;}
   .hint{font-size:12.5px;color:var(--text-mut);margin-top:10px;line-height:1.6;}
   .hint code, code{font-family:var(--mono);font-size:.92em;background:var(--field);border:1px solid var(--border);border-radius:6px;padding:1px 5px;}
@@ -795,6 +799,17 @@ const PLATFORM_CFG = {
   }
 };
 const PBADGE = { youtube: 'YT', facebook: 'FB', instagram: 'IG' };
+/* Font Awesome Free 6 brand icon paths (CC BY 4.0). Inlined so there's no
+   CDN load, no CSP concern, no font-loading flicker. */
+const PBADGE_SVG = {
+  youtube:  '<svg viewBox="0 0 576 512" fill="currentColor" aria-hidden="true"><path d="M549.7 124.1c-6.3-23.7-24.8-42.3-48.3-48.6C458.8 64 288 64 288 64S117.2 64 74.6 75.5c-23.5 6.3-42 24.9-48.3 48.6C15 167 15 256 15 256s0 89 11.3 131.9c6.3 23.7 24.8 41.5 48.3 47.8C117.2 448 288 448 288 448s170.8 0 213.4-12.3c23.5-6.3 42-24.1 48.3-47.8C561 345 561 256 561 256s0-89-11.3-131.9zM232 336V176l142 80-142 80z"/></svg>',
+  facebook: '<svg viewBox="0 0 320 512" fill="currentColor" aria-hidden="true"><path d="M279.14 288l14.22-92.66h-88.91v-60.13c0-25.35 12.42-50.06 52.24-50.06h40.42V6.26S260.43 0 225.36 0c-73.22 0-121.08 44.38-121.08 124.72v70.62H22.89V288h81.39v224h100.17V288z"/></svg>',
+  instagram:'<svg viewBox="0 0 448 512" fill="currentColor" aria-hidden="true"><path d="M224.1 141c-63.6 0-114.9 51.3-114.9 114.9s51.3 114.9 114.9 114.9S339 319.5 339 255.9 287.7 141 224.1 141zm0 189.6c-41.1 0-74.7-33.5-74.7-74.7s33.5-74.7 74.7-74.7 74.7 33.5 74.7 74.7-33.6 74.7-74.7 74.7zm146.4-194.3c0 14.9-12 26.8-26.8 26.8-14.9 0-26.8-12-26.8-26.8s12-26.8 26.8-26.8 26.8 12 26.8 26.8zm76.1 27.2c-1.7-35.9-9.9-67.7-36.2-93.9-26.2-26.2-58-34.4-93.9-36.2-37-2.1-147.9-2.1-184.9 0-35.8 1.7-67.6 9.9-93.9 36.1s-34.4 58-36.2 93.9c-2.1 37-2.1 147.9 0 184.9 1.7 35.9 9.9 67.7 36.2 93.9s58 34.4 93.9 36.2c37 2.1 147.9 2.1 184.9 0 35.9-1.7 67.7-9.9 93.9-36.2 26.2-26.2 34.4-58 36.2-93.9 2.1-37 2.1-147.8 0-184.8zM398.8 388c-7.8 19.6-22.9 34.7-42.6 42.6-29.5 11.7-99.5 9-132.1 9s-102.7 2.6-132.1-9c-19.6-7.8-34.7-22.9-42.6-42.6-11.7-29.5-9-99.5-9-132.1s-2.6-102.7 9-132.1c7.8-19.6 22.9-34.7 42.6-42.6 29.5-11.7 99.5-9 132.1-9s102.7-2.6 132.1 9c19.6 7.8 34.7 22.9 42.6 42.6 11.7 29.5 9 99.5 9 132.1s2.7 102.7-9 132.1z"/></svg>',
+};
+function pIcon(platform) {
+  const svg = PBADGE_SVG[platform] || (PBADGE[platform] || '?');
+  return `<span class="pbadge ${platform}" title="${platform}">${svg}</span>`;
+}
 
 async function applyPlatform(p) {
   platform = p;
@@ -1564,7 +1579,7 @@ async function renderRuns() {
   $('runsList').innerHTML = runs.map(r => `
     <li>
       <div class="run-meta">
-        <div class="run-name"><span class="pbadge ${r.platform || 'youtube'}">${PBADGE[r.platform || 'youtube']}</span>${escapeHtml(r.name)}</div>
+        <div class="run-name">${pIcon(r.platform || 'youtube')}${escapeHtml(r.name)}</div>
         <div class="run-sub">${r.totalComments.toLocaleString()} comments · ${r.totalVideos} videos · ${new Date(r.createdAt).toLocaleString()}</div>
         ${session ? `<label class="nightly"><input type="checkbox" data-auto="${r.id}" ${r.autoRefresh ? 'checked' : ''}> refresh nightly${
           r.lastRefreshedAt ? ` · last ran ${new Date(r.lastRefreshedAt).toLocaleDateString()}` : ''}</label>` : ''}
@@ -2210,7 +2225,7 @@ async function enterSharedView(token) {
     if (!run) { banner.innerHTML = 'This shared report was not found. The link may be wrong or the report was deleted.'; return; }
     document.title = run.name + ' — shared report';
     const pl = run.platform || 'youtube';
-    banner.innerHTML = '<span class="pbadge ' + pl + '">' + PBADGE[pl] + '</span><strong>' +
+    banner.innerHTML = pIcon(pl) + '<strong>' +
       escapeHtml(run.name) + '</strong> · shared report (read-only) · ' + run.totalComments.toLocaleString() + ' comments';
     allComments = run.comments;
     videoStats = run.videoStats.length ? run.videoStats : rebuildVideoStats(run.comments);

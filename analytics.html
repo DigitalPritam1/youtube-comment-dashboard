@@ -200,10 +200,17 @@
   .status.dot-ok::before,.status.dot-err::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:6px;vertical-align:middle;}
   .status.dot-ok::before{background:var(--accent);}
   .status.dot-err::before{background:var(--danger);}
-  .pbadge{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.03em;padding:2px 7px;border-radius:6px;margin-right:6px;vertical-align:middle;}
-  .pbadge.youtube{background:rgba(192,64,47,.15);color:var(--danger);}
-  .pbadge.facebook{background:rgba(37,99,235,.15);color:#3b82f6;}
+  /* Platform badge — displays a Font Awesome brand SVG icon inside a color-
+     tinted pill. Same colors as before; icon replaces the YT/FB/IG letters. */
+  .pbadge{display:inline-flex;align-items:center;justify-content:center;
+    width:22px;height:22px;padding:0;border-radius:7px;margin-right:8px;
+    vertical-align:middle;flex-shrink:0;}
+  .pbadge svg{width:12px;height:12px;display:block;}
+  .pbadge.youtube  {background:rgba(192,64,47,.15);color:var(--danger);}
+  .pbadge.facebook {background:rgba(37,99,235,.15);color:#3b82f6;}
   .pbadge.instagram{background:rgba(214,41,118,.15);color:#e0559a;}
+  .pbadge.tiny{width:18px;height:18px;border-radius:5px;}
+  .pbadge.tiny svg{width:10px;height:10px;}
   table{width:100%;border-collapse:collapse;font-size:13px;}
   th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-mut);padding:10px 8px;border-bottom:1px solid var(--border-strong);font-weight:600;}
   td{padding:11px 8px;border-bottom:1px solid var(--border);vertical-align:middle;}
@@ -386,6 +393,20 @@ const SUPABASE_URL = 'https://aycfiqndcavzgipgurih.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_Fb5vTDz7dWlfk2-l7i4LAg_XRlCYwH2';
 const GRAPH_URL = 'https://graph.facebook.com/v21.0/';
 const PBADGE = { youtube: 'YT', facebook: 'FB', instagram: 'IG' };
+/* Font Awesome Free 6 brand icon paths (CC BY 4.0, MIT for code).
+   Inlined so there's no CDN load, no CSP concern, no font-loading flicker. */
+const PBADGE_SVG = {
+  youtube:  '<svg viewBox="0 0 576 512" fill="currentColor" aria-hidden="true"><path d="M549.7 124.1c-6.3-23.7-24.8-42.3-48.3-48.6C458.8 64 288 64 288 64S117.2 64 74.6 75.5c-23.5 6.3-42 24.9-48.3 48.6C15 167 15 256 15 256s0 89 11.3 131.9c6.3 23.7 24.8 41.5 48.3 47.8C117.2 448 288 448 288 448s170.8 0 213.4-12.3c23.5-6.3 42-24.1 48.3-47.8C561 345 561 256 561 256s0-89-11.3-131.9zM232 336V176l142 80-142 80z"/></svg>',
+  facebook: '<svg viewBox="0 0 320 512" fill="currentColor" aria-hidden="true"><path d="M279.14 288l14.22-92.66h-88.91v-60.13c0-25.35 12.42-50.06 52.24-50.06h40.42V6.26S260.43 0 225.36 0c-73.22 0-121.08 44.38-121.08 124.72v70.62H22.89V288h81.39v224h100.17V288z"/></svg>',
+  instagram:'<svg viewBox="0 0 448 512" fill="currentColor" aria-hidden="true"><path d="M224.1 141c-63.6 0-114.9 51.3-114.9 114.9s51.3 114.9 114.9 114.9S339 319.5 339 255.9 287.7 141 224.1 141zm0 189.6c-41.1 0-74.7-33.5-74.7-74.7s33.5-74.7 74.7-74.7 74.7 33.5 74.7 74.7-33.6 74.7-74.7 74.7zm146.4-194.3c0 14.9-12 26.8-26.8 26.8-14.9 0-26.8-12-26.8-26.8s12-26.8 26.8-26.8 26.8 12 26.8 26.8zm76.1 27.2c-1.7-35.9-9.9-67.7-36.2-93.9-26.2-26.2-58-34.4-93.9-36.2-37-2.1-147.9-2.1-184.9 0-35.8 1.7-67.6 9.9-93.9 36.1s-34.4 58-36.2 93.9c-2.1 37-2.1 147.9 0 184.9 1.7 35.9 9.9 67.7 36.2 93.9s58 34.4 93.9 36.2c37 2.1 147.9 2.1 184.9 0 35.9-1.7 67.7-9.9 93.9-36.2 26.2-26.2 34.4-58 36.2-93.9 2.1-37 2.1-147.8 0-184.8zM398.8 388c-7.8 19.6-22.9 34.7-42.6 42.6-29.5 11.7-99.5 9-132.1 9s-102.7 2.6-132.1-9c-19.6-7.8-34.7-22.9-42.6-42.6-11.7-29.5-9-99.5-9-132.1s-2.6-102.7 9-132.1c7.8-19.6 22.9-34.7 42.6-42.6 29.5-11.7 99.5-9 132.1-9s102.7-2.6 132.1 9c19.6 7.8 34.7 22.9 42.6 42.6 11.7 29.5 9 99.5 9 132.1s2.7 102.7-9 132.1z"/></svg>',
+};
+/* One place to render a platform pill — swap the icon set here later and every
+   badge on the page updates. Falls back to the 2-letter code if we ever add a
+   platform without an icon. */
+function pIcon(platform, extraCls) {
+  const svg = PBADGE_SVG[platform] || `<span class="pbadge-fallback">${PBADGE[platform] || '?'}</span>`;
+  return `<span class="pbadge ${platform}${extraCls ? ' ' + extraCls : ''}" title="${escapeHtml(platform)}">${svg}</span>`;
+}
 
 /* Preloaded brand defaults for first-run seed. YT handles known; FB/IG Pages are
    auto-picked from the Pages the shared System User can see. */
@@ -643,7 +664,7 @@ function renderSourceList() {
   }
   el.innerHTML = sources.map(s => `
     <div class="src-row" data-id="${escapeHtml(s.id)}">
-      <div><span class="pbadge ${s.platform}">${PBADGE[s.platform]}</span> <b>${escapeHtml(s.brand)}</b></div>
+      <div>${pIcon(s.platform, 'tiny')} <b>${escapeHtml(s.brand)}</b></div>
       <div class="sub">${escapeHtml(s.platform)}</div>
       <div>
         <div class="lbl">${escapeHtml(s.label || s.source_id)}</div>
@@ -1128,7 +1149,7 @@ function renderBreakdown() {
       const pcode = s.platform === 'youtube' ? 'yt' : s.platform === 'facebook' ? 'fb' : 'ig';
       rows.push(`<tr class="source-row ${pcode}" data-id="${s.id}">
         <td></td>
-        <td><div class="src-line"><span class="pbadge ${s.platform}">${PBADGE[s.platform]}</span><span class="lbl">${escapeHtml(s.label || s.source_id)}</span></div></td>
+        <td><div class="src-line">${pIcon(s.platform)}<span class="lbl">${escapeHtml(s.label || s.source_id)}</span></div></td>
         ${cols.map(m => cellFor(m, t, snap, s.id)).join('')}
       </tr>`);
       for (const k of Object.keys(bt)) if (typeof t[k] === 'number') bt[k] += t[k];
@@ -1283,63 +1304,337 @@ $('filterReset').addEventListener('click', () => {
   renderBreakdown();
 });
 
-$('exportPdfBtn').addEventListener('click', () => {
-  try {
-    const { jsPDF } = window.jspdf || {};
-    if (!jsPDF) throw new Error('PDF library did not load.');
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
-    const brand = filterState.brand || (sources[0]?.brand) || 'Analytics';
-    const title = filterState.platform || filterState.brand
-      ? `Brand analytics (${[filterState.brand, filterState.platform].filter(Boolean).join(' · ')})`
-      : 'Brand analytics — all brands';
+/* Rebuilt PDF export — mirrors the web page's structure: header block,
+   grand-total tiles, timeframe row, then a brand-grouped table with the
+   same accent palette. Credit footer on every page. */
+const PDF = {
+  // Palette echoing --accent, --text, --border etc. from the web CSS.
+  C: {
+    accent:      [46, 125, 79],
+    accentLight: [238, 248, 241],
+    text:        [27, 36, 48],
+    textSec:     [88, 96, 113],
+    textMut:     [139, 147, 161],
+    border:      [220, 224, 230],
+    tileBg:      [246, 248, 250],
+    yt: [192, 64, 47], fb: [59, 130, 246], ig: [214, 41, 118],
+    white: [255, 255, 255], softBg: [252, 253, 254],
+  },
+  M: 40,   // page margin
+};
 
-    doc.setFontSize(16); doc.setFont('helvetica', 'bold');
-    doc.text(title, 40, 40);
-    doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(90);
-    const latest = Object.values(lastSnapshot).reduce((m, r) => r.captured_at > m ? r.captured_at : m, '');
-    const meta = [];
-    meta.push('Generated ' + new Date().toLocaleString());
-    if (latest) meta.push('Last snapshot ' + new Date(latest).toLocaleString());
-    doc.text(meta.join('   ·   '), 40, 58);
-    doc.setTextColor(0);
+function pdfPlatformColor(p) {
+  return p === 'youtube' ? PDF.C.yt : p === 'facebook' ? PDF.C.fb : PDF.C.ig;
+}
+/* Small platform pill drawn with jsPDF primitives — no SVG/image dependency.
+   Same visual language as the .pbadge on the web: tinted rounded rect with the
+   2-letter code inside. */
+function pdfDrawPlatformBadge(doc, x, y, w, h, platform) {
+  const col = pdfPlatformColor(platform);
+  // Tint the bg like rgba(color, .15) by mixing 15% color into white.
+  const tint = [
+    Math.round(col[0] * 0.15 + 255 * 0.85),
+    Math.round(col[1] * 0.15 + 255 * 0.85),
+    Math.round(col[2] * 0.15 + 255 * 0.85),
+  ];
+  doc.setFillColor(...tint);
+  doc.roundedRect(x, y, w, h, 2.5, 2.5, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.8);
+  doc.setTextColor(...col);
+  const letters = PBADGE[platform] || '?';
+  const tw = doc.getTextWidth(letters);
+  doc.text(letters, x + (w - tw) / 2, y + h / 2 + 2.3);
+}
 
-    const totalsRows = buildTotalsRows();          // header row + data rows
-    const head = [totalsRows[0]];
-    const body = totalsRows.slice(1).map(r => r.map((v, i) => {
-      // Compact + exact in the numeric columns (indexes 3..9 in the totals-rows layout)
-      if (i >= 3 && i <= 9 && typeof v === 'number') return fmtCompact(v) + '\n' + Number(v).toLocaleString();
-      return v ?? '';
-    }));
-    doc.autoTable({
-      head, body, startY: 78,
-      styles: { fontSize: 8, cellPadding: 4, lineColor: [220, 224, 230], lineWidth: 0.5 },
-      headStyles: { fillColor: [46, 125, 79], textColor: 255, fontStyle: 'bold' },
-      alternateRowStyles: { fillColor: [250, 251, 252] },
-      didParseCell: (data) => {
-        const kind = data.row.raw && data.row.raw[0];
-        if (typeof kind === 'string' && /— total$/.test(kind)) {
-          data.cell.styles.fillColor = [238, 248, 241];
-          data.cell.styles.fontStyle = 'bold';
-        }
-        if (typeof kind === 'string' && kind === 'GRAND TOTAL') {
-          data.cell.styles.fillColor = [46, 125, 79];
-          data.cell.styles.textColor = 255;
-          data.cell.styles.fontStyle = 'bold';
-        }
-      }
-    });
+/* Two-line "compact\nexact" cell content for numeric metrics. autoTable renders
+   each \n as a new line inside the cell, and didParseCell then styles the two
+   lines separately (see below). */
+function pdfNumCell(v) {
+  if (v == null || isNaN(v)) return '—';
+  const c = fmtCompact(v);
+  const e = Number(v).toLocaleString();
+  return c === e ? c : `${c}\n${e}`;
+}
 
-    // Small design credit at the bottom of the last page (attribution, not chrome).
-    const pageCount = doc.internal.getNumberOfPages();
-    for (let i = 1; i <= pageCount; i++) {
-      doc.setPage(i);
-      doc.setFontSize(8); doc.setTextColor(150);
-      doc.text('Designed by Pritam Sonone · digitalpritam.in', 40, doc.internal.pageSize.getHeight() - 20);
-      doc.text(`Page ${i} of ${pageCount}`, doc.internal.pageSize.getWidth() - 80, doc.internal.pageSize.getHeight() - 20);
+function buildAnalyticsPdf() {
+  const { jsPDF } = window.jspdf || {};
+  if (!jsPDF) throw new Error('PDF library did not load.');
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+  const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
+  const M = PDF.M;
+  const C = PDF.C;
+
+  // -------- pre-compute totals from the current view --------
+  const g = grouped();
+  const brands = Object.keys(g).sort();
+  const brandTotals = {};
+  const grand = { content:0, followers:0, views:0, likes:0, comments:0, shares:0, engagement:0 };
+  let earliestSince = null, latestUntil = null;
+  for (const brand of brands) {
+    const bt = { content:0, followers:0, views:0, likes:0, comments:0, shares:0, engagement:0 };
+    for (const { s } of g[brand]) {
+      const t = lastSnapshot[s.id]?.totals || {};
+      for (const k of Object.keys(bt)) if (typeof t[k] === 'number') bt[k] += t[k];
+      if (t.since && (!earliestSince || t.since < earliestSince)) earliestSince = t.since;
+      if (t.until && (!latestUntil   || t.until > latestUntil))   latestUntil   = t.until;
+    }
+    brandTotals[brand] = bt;
+    for (const k of Object.keys(grand)) grand[k] += bt[k];
+  }
+
+  // -------- top header block --------
+  let y = M;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(22);
+  doc.setTextColor(...C.text);
+  doc.text('Brand analytics', M, y + 4);
+
+  // Filter/scope subtitle top-right, so title stays clean and left-aligned.
+  const scope = filterState.brand || filterState.platform
+    ? `${filterState.brand || 'All brands'}${filterState.platform ? ' · ' + filterState.platform : ''}`
+    : 'All brands · All platforms';
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.setTextColor(...C.textSec);
+  const scopeW = doc.getTextWidth(scope);
+  doc.text(scope, W - M - scopeW, y);
+  y += 20;
+
+  // Generation timestamp + last-snapshot on one muted line.
+  const latest = Object.values(lastSnapshot).reduce((m, r) => r.captured_at > m ? r.captured_at : m, '');
+  const bits = ['Generated ' + new Date().toLocaleString()];
+  if (latest) bits.push('Last snapshot ' + new Date(latest).toLocaleString());
+  doc.setFontSize(8.5);
+  doc.setTextColor(...C.textMut);
+  doc.text(bits.join('   ·   '), M, y);
+  y += 20;
+
+  // -------- grand-total tiles (5 boxes across the width) --------
+  const tiles = [
+    ['CONTENT PIECES', grand.content],
+    ['FOLLOWERS',      grand.followers],
+    ['VIEWS',          grand.views],
+    ['COMMENTS',       grand.comments],
+    ['ENGAGEMENT',     grand.engagement],
+  ];
+  const tileGap = 10;
+  const tileW = (W - 2 * M - (tiles.length - 1) * tileGap) / tiles.length;
+  const tileH = 66;
+  tiles.forEach(([label, val], i) => {
+    const x = M + i * (tileW + tileGap);
+    doc.setFillColor(...C.tileBg);
+    doc.setDrawColor(...C.border);
+    doc.setLineWidth(0.5);
+    doc.roundedRect(x, y, tileW, tileH, 8, 8, 'FD');
+    // Compact headline in accent green
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(20);
+    doc.setTextColor(...C.accent);
+    doc.text(fmtCompact(val), x + 12, y + 28);
+    // Exact number underneath, only when it adds info
+    if (val != null && !isNaN(val) && Number(val) >= 1000) {
+      doc.setFont('courier', 'normal');
+      doc.setFontSize(7.5);
+      doc.setTextColor(...C.textMut);
+      doc.text(Number(val).toLocaleString(), x + 12, y + 42);
+    }
+    // Label
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(...C.textMut);
+    doc.text(label, x + 12, y + 58);
+  });
+  y += tileH + 14;
+
+  // -------- timeframe row --------
+  if (earliestSince) {
+    doc.setFillColor(...C.softBg);
+    doc.setDrawColor(...C.border);
+    doc.roundedRect(M, y, W - 2 * M, 22, 4, 4, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(...C.textMut);
+    doc.text('DATA COVERS', M + 12, y + 14);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(...C.text);
+    const from = monthYear(earliestSince);
+    const to   = latestUntil ? monthYear(latestUntil) : 'now';
+    doc.text(`${from}   →   ${to}`, M + 90, y + 15);
+    y += 22 + 14;
+  }
+
+  // -------- section title --------
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(...C.text);
+  doc.text('Per-source breakdown', M, y);
+  y += 6;
+
+  // -------- table body --------
+  const head = [[
+    'Source', 'Platform', 'Since', 'Content', 'Followers', 'Views',
+    'Likes', 'Comments', 'Shares', 'Engagement', 'Updated',
+  ]];
+
+  // Row metadata for didParseCell / didDrawCell to know what to style. autoTable
+  // strips styles you set on cells before the pass, so we keep this side-array.
+  const body = [];
+  const rowKinds = [];       // 'brand-head' | 'source' | 'brand-total' | 'grand-total'
+  const rowPlatforms = [];   // per row (source rows carry a platform code)
+
+  for (const brand of brands) {
+    const items = g[brand];
+    const bt = brandTotals[brand];
+
+    body.push([{ content: `${brand.toUpperCase()}   ·   ${items.length} source${items.length===1?'':'s'}`, colSpan: 11 }]);
+    rowKinds.push('brand-head'); rowPlatforms.push(null);
+
+    for (const { s } of items) {
+      const t = lastSnapshot[s.id]?.totals || {};
+      const snap = lastSnapshot[s.id];
+      const updated = collectErrors[s.id]
+        ? 'error'
+        : (snap ? fmtWhen(snap.captured_at) + (t._note ? ' · *' : '') : '—');
+      body.push([
+        s.label || s.source_id,
+        '',   // platform pill drawn in didDrawCell
+        t.since ? monthYear(t.since) : '—',
+        pdfNumCell(t.content), pdfNumCell(t.followers), pdfNumCell(t.views),
+        pdfNumCell(t.likes), pdfNumCell(t.comments), pdfNumCell(t.shares),
+        pdfNumCell(t.engagement),
+        updated,
+      ]);
+      rowKinds.push('source'); rowPlatforms.push(s.platform);
     }
 
+    body.push([
+      { content: `${brand} total`, colSpan: 3 },
+      pdfNumCell(bt.content), pdfNumCell(bt.followers), pdfNumCell(bt.views),
+      pdfNumCell(bt.likes), pdfNumCell(bt.comments), pdfNumCell(bt.shares),
+      pdfNumCell(bt.engagement),
+      '',
+    ]);
+    rowKinds.push('brand-total'); rowPlatforms.push(null);
+  }
+
+  // Grand total row
+  const gtLabel = 'GRAND TOTAL' + (filterState.platform || filterState.brand ? '  (filtered)' : '');
+  body.push([
+    { content: gtLabel, colSpan: 3 },
+    pdfNumCell(grand.content), pdfNumCell(grand.followers), pdfNumCell(grand.views),
+    pdfNumCell(grand.likes), pdfNumCell(grand.comments), pdfNumCell(grand.shares),
+    pdfNumCell(grand.engagement),
+    '',
+  ]);
+  rowKinds.push('grand-total'); rowPlatforms.push(null);
+
+  doc.autoTable({
+    head, body, startY: y,
+    margin: { left: M, right: M, bottom: 40 },
+    theme: 'plain',
+    styles: {
+      fontSize: 8.5, cellPadding: { top: 7, bottom: 7, left: 8, right: 8 },
+      lineColor: C.border, lineWidth: 0.4, valign: 'middle',
+      textColor: C.text, font: 'helvetica',
+    },
+    headStyles: {
+      fillColor: C.white, textColor: C.textMut, fontStyle: 'bold', fontSize: 7,
+      lineWidth: { bottom: 1 }, lineColor: C.border, cellPadding: { top: 8, bottom: 6, left: 8, right: 8 },
+    },
+    columnStyles: {
+      0: { cellWidth: 138 },
+      1: { cellWidth: 48, halign: 'center' },
+      2: { cellWidth: 46 },
+      3: { halign: 'right', cellWidth: 62 },
+      4: { halign: 'right', cellWidth: 62 },
+      5: { halign: 'right', cellWidth: 62 },
+      6: { halign: 'right', cellWidth: 60 },
+      7: { halign: 'right', cellWidth: 60 },
+      8: { halign: 'right', cellWidth: 50 },
+      9: { halign: 'right', cellWidth: 62 },
+      10:{ cellWidth: 60 },
+    },
+    didParseCell: (data) => {
+      if (data.section !== 'body') return;
+      const kind = rowKinds[data.row.index];
+      if (kind === 'brand-head') {
+        data.cell.styles.fillColor = C.accentLight;
+        data.cell.styles.textColor = C.accent;
+        data.cell.styles.fontStyle = 'bold';
+        data.cell.styles.fontSize = 9;
+        data.cell.styles.cellPadding = { top: 8, bottom: 6, left: 10, right: 8 };
+      } else if (kind === 'brand-total') {
+        data.cell.styles.fillColor = C.accentLight;
+        data.cell.styles.textColor = C.text;
+        data.cell.styles.fontStyle = 'bold';
+      } else if (kind === 'grand-total') {
+        data.cell.styles.fillColor = C.accent;
+        data.cell.styles.textColor = C.white;
+        data.cell.styles.fontStyle = 'bold';
+        data.cell.styles.fontSize = 9.5;
+        data.cell.styles.cellPadding = { top: 9, bottom: 9, left: 10, right: 8 };
+      } else if (kind === 'source') {
+        // Bold headline for the source name, muted number-under-number effect
+        // is created by autoTable rendering \n; we can't restyle a single line
+        // separately, so keep it simple and readable at one size.
+        if (data.column.index === 0) data.cell.styles.fontStyle = 'bold';
+        if (data.column.index === 10) data.cell.styles.textColor = C.textMut;
+      }
+    },
+    didDrawCell: (data) => {
+      if (data.section !== 'body') return;
+      const kind = rowKinds[data.row.index];
+      const platform = rowPlatforms[data.row.index];
+      if (kind !== 'source') return;
+      // Platform-colored left accent bar mirrors the web's border-left on
+      // source rows — done on the very first cell of every source row.
+      if (data.column.index === 0 && platform) {
+        doc.setFillColor(...pdfPlatformColor(platform));
+        doc.rect(data.cell.x, data.cell.y, 2.4, data.cell.height, 'F');
+      }
+      // Platform badge inside the Platform column.
+      if (data.column.index === 1 && platform) {
+        const bw = 22, bh = 12;
+        const bx = data.cell.x + (data.cell.width - bw) / 2;
+        const by = data.cell.y + (data.cell.height - bh) / 2;
+        pdfDrawPlatformBadge(doc, bx, by, bw, bh, platform);
+      }
+    },
+  });
+
+  // -------- footer on every page (credit + page numbers) --------
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setDrawColor(...C.border);
+    doc.setLineWidth(0.5);
+    doc.line(M, H - 32, W - M, H - 32);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(...C.textMut);
+    doc.text('Designed by Pritam Sonone  ·  digitalpritam.in  ·  contact@digitalpritam.in',
+      M, H - 18);
+
+    const pageLabel = `Page ${i} of ${pageCount}`;
+    const pageTextW = doc.getTextWidth(pageLabel);
+    doc.text(pageLabel, W - M - pageTextW, H - 18);
+  }
+
+  return doc;
+}
+
+$('exportPdfBtn').addEventListener('click', () => {
+  try {
+    const doc = buildAnalyticsPdf();
+    const brand = filterState.brand || (sources[0]?.brand) || 'Analytics';
     doc.save(`${slug(brand)}-analytics-${new Date().toISOString().slice(0,10)}.pdf`);
-  } catch (e) { showAlert('collectAlert', 'PDF export failed: ' + (e.message || e)); }
+  } catch (e) {
+    showAlert('collectAlert', 'PDF export failed: ' + (e.message || e));
+  }
 });
 
 $('exportCsvBtn').addEventListener('click', () => {
