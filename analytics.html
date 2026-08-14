@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Brand Analytics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+  :root{
+    --bg:#FAFBFC; --bg-elev:#ffffff;
+    --card:rgba(255,255,255,.72); --card-2:rgba(255,255,255,.55); --field:rgba(255,255,255,.66);
+    --border:rgba(17,24,39,.08); --border-strong:rgba(17,24,39,.14);
+    --text:#1b2430; --text-sec:#586071; --text-mut:#8b93a1;
+    --accent:#2E7D4F; --accent-hover:#236A41; --accent-light:#EEF8F1; --accent-dark:#163A25; --accent-fg:#ffffff;
+    --gold:#b4842a; --danger:#c0402f;
+    --hover:rgba(46,125,79,.05);
+    --r-sm:12px; --r-md:18px; --r-lg:24px; --r-xl:32px;
+    --shadow-sm:0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
+    --shadow-md:0 4px 12px rgba(16,24,40,.05), 0 10px 40px rgba(16,24,40,.06);
+    --shadow-lg:0 12px 24px rgba(16,24,40,.08), 0 24px 60px rgba(16,24,40,.10);
+    --ring:0 0 0 4px rgba(46,125,79,.14);
+    --ease:cubic-bezier(.22,1,.36,1); --dur:.25s;
+    --mono:'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+    --sans:'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0f1319; --bg-elev:rgba(255,255,255,.10);
+      --card:rgba(26,32,40,.68); --card-2:rgba(26,32,40,.5); --field:rgba(255,255,255,.045);
+      --border:rgba(255,255,255,.08); --border-strong:rgba(255,255,255,.15);
+      --text:#e7eaf0; --text-sec:#a3abb8; --text-mut:#727b8a;
+      --accent:#5FB27E; --accent-hover:#72c091; --accent-light:rgba(95,178,126,.14); --accent-dark:#c9ead6; --accent-fg:#0b120d;
+      --gold:#d9ac5c; --danger:#e08b7a;
+      --hover:rgba(255,255,255,.035);
+      --ring:0 0 0 4px rgba(95,178,126,.18);
+      --shadow-sm:0 1px 2px rgba(0,0,0,.3);
+      --shadow-md:0 4px 14px rgba(0,0,0,.32), 0 12px 40px rgba(0,0,0,.30);
+      --shadow-lg:0 16px 50px rgba(0,0,0,.45);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0f1319; --bg-elev:rgba(255,255,255,.10);
+    --card:rgba(26,32,40,.68); --card-2:rgba(26,32,40,.5); --field:rgba(255,255,255,.045);
+    --border:rgba(255,255,255,.08); --border-strong:rgba(255,255,255,.15);
+    --text:#e7eaf0; --text-sec:#a3abb8; --text-mut:#727b8a;
+    --accent:#5FB27E; --accent-hover:#72c091; --accent-light:rgba(95,178,126,.14); --accent-dark:#c9ead6; --accent-fg:#0b120d;
+    --gold:#d9ac5c; --danger:#e08b7a;
+    --hover:rgba(255,255,255,.035);
+    --ring:0 0 0 4px rgba(95,178,126,.18);
+    --shadow-sm:0 1px 2px rgba(0,0,0,.3);
+    --shadow-md:0 4px 14px rgba(0,0,0,.32), 0 12px 40px rgba(0,0,0,.30);
+    --shadow-lg:0 16px 50px rgba(0,0,0,.45);
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;color:var(--text);font-family:var(--sans);font-size:15px;line-height:1.6;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+    background:
+      radial-gradient(1100px 620px at 12% -12%, rgba(46,125,79,.07), transparent 60%),
+      radial-gradient(900px 520px at 112% 4%, rgba(46,125,79,.05), transparent 55%),
+      var(--bg);
+    background-attachment:fixed;
+  }
+  .wrap{max-width:1200px;margin:0 auto;padding:46px 24px 96px;}
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:8px;flex-wrap:wrap;}
+  .nav{display:flex;gap:8px;align-items:center;}
+  .nav a{color:var(--text-sec);text-decoration:none;font-size:13px;font-weight:500;padding:8px 14px;border-radius:10px;transition:color var(--dur) var(--ease),background var(--dur) var(--ease);}
+  .nav a:hover{color:var(--accent);background:var(--hover);}
+  .nav a.active{color:var(--accent);background:var(--accent-light);}
+  h1{font-weight:800;font-size:36px;line-height:1.06;letter-spacing:-.028em;margin:0;}
+  .sub{color:var(--text-sec);font-size:15px;margin:10px 0 26px;line-height:1.6;max-width:640px;}
+  .card{
+    background:var(--card);
+    -webkit-backdrop-filter:blur(20px) saturate(140%);backdrop-filter:blur(20px) saturate(140%);
+    border:1px solid var(--border);border-radius:var(--r-lg);
+    padding:22px 24px;margin-bottom:20px;box-shadow:var(--shadow-md);
+  }
+  .card h2{font-size:17px;font-weight:700;letter-spacing:-.01em;margin:0 0 14px;}
+  button{
+    background:linear-gradient(180deg,var(--accent),var(--accent-hover));
+    color:var(--accent-fg);border:none;border-radius:var(--r-sm);
+    padding:11px 18px;font-size:13.5px;font-weight:600;cursor:pointer;font-family:var(--sans);
+    box-shadow:var(--shadow-sm), inset 0 1px 0 rgba(255,255,255,.18);
+    transition:transform var(--dur) var(--ease),box-shadow var(--dur) var(--ease),filter var(--dur) var(--ease),opacity var(--dur) var(--ease);
+  }
+  button:hover:not(:disabled){transform:translateY(-1px);box-shadow:var(--shadow-md), inset 0 1px 0 rgba(255,255,255,.22);filter:saturate(1.06);}
+  button:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none;}
+  button.ghost{background:var(--field);color:var(--text);border:1px solid var(--border-strong);box-shadow:none;}
+  button.ghost:hover:not(:disabled){border-color:var(--accent);color:var(--accent);filter:none;}
+  button.tiny{padding:6px 12px;font-size:12px;font-weight:500;border-radius:10px;}
+  button.danger{background:transparent;color:var(--danger);border:1px solid rgba(192,64,47,.2);box-shadow:none;}
+  button.danger:hover:not(:disabled){background:rgba(192,64,47,.08);}
+  input[type=text],input[type=password],select{
+    width:100%;padding:12px 14px;border:1px solid var(--border-strong);border-radius:var(--r-sm);
+    background:var(--field);color:var(--text);font-size:14px;font-family:var(--sans);
+  }
+  input[type=text]:focus,input[type=password]:focus,select:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring);}
+  label{display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-mut);margin-bottom:6px;}
+  .authbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  .authbar input{max-width:240px;}
+  .whoami{display:flex;align-items:center;gap:10px;font-size:13px;}
+  .avatar{width:34px;height:34px;border-radius:50%;background:var(--accent-light);color:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;}
+  .avatar.off{background:var(--field);color:var(--text-mut);}
+  .whoinfo{display:flex;flex-direction:column;line-height:1.25;}
+  .whostatus{color:var(--text-mut);font-size:11.5px;display:flex;align-items:center;gap:6px;}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);}
+  .dot.off{background:var(--text-mut);}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:8px;}
+  .tile{background:var(--card-2);border:1px solid var(--border);border-radius:var(--r-md);padding:20px 22px;box-shadow:var(--shadow-sm);}
+  .tile .n{font-size:32px;font-weight:800;letter-spacing:-.024em;color:var(--accent);line-height:1.05;}
+  .tile .l{font-size:12px;color:var(--text-mut);margin-top:6px;text-transform:uppercase;letter-spacing:.05em;font-weight:600;}
+  .pbadge{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.03em;padding:2px 7px;border-radius:6px;margin-right:6px;vertical-align:middle;}
+  .pbadge.youtube{background:rgba(192,64,47,.15);color:var(--danger);}
+  .pbadge.facebook{background:rgba(37,99,235,.15);color:#3b82f6;}
+  .pbadge.instagram{background:rgba(214,41,118,.15);color:#e0559a;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-mut);padding:10px 8px;border-bottom:1px solid var(--border-strong);font-weight:600;}
+  td{padding:11px 8px;border-bottom:1px solid var(--border);vertical-align:middle;}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;}
+  tr.brand-total td{background:var(--accent-light);font-weight:600;}
+  tr.grand-total td{background:var(--card-2);font-weight:800;font-size:14px;border-top:2px solid var(--accent);border-bottom:2px solid var(--accent);}
+  .status{color:var(--text-sec);font-size:12px;}
+  .status.err{color:var(--danger);}
+  .status.ok{color:var(--accent);}
+  .progress-wrap{margin-top:12px;display:none;}
+  .progress-bar{height:5px;background:var(--border);border-radius:99px;overflow:hidden;}
+  .progress-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--accent),var(--accent-hover));border-radius:99px;transition:width var(--dur) var(--ease);}
+  .progress-log{font-family:var(--mono);font-size:12px;color:var(--text-sec);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .alert{border-left:3px solid var(--danger);background:rgba(192,64,47,.09);padding:12px 16px;border-radius:0 var(--r-sm) var(--r-sm) 0;font-size:13px;margin-top:12px;display:none;}
+  .empty{color:var(--text-mut);font-size:14px;padding:36px 0;text-align:center;}
+  .hint{font-size:12.5px;color:var(--text-mut);margin-top:12px;line-height:1.6;}
+  .hint code, code{font-family:var(--mono);font-size:.92em;background:var(--field);border:1px solid var(--border);border-radius:6px;padding:1px 5px;}
+  .src-row{display:grid;grid-template-columns:130px 100px 1fr 120px;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);align-items:center;}
+  .src-row:last-child{border-bottom:none;}
+  .src-row .lbl{font-size:13px;color:var(--text);}
+  .src-row .sub{margin:0;font-size:11.5px;color:var(--text-mut);}
+  .add-row{display:grid;grid-template-columns:130px 120px 1fr 100px;gap:10px;align-items:end;margin-top:10px;}
+  @media(max-width:800px){.src-row,.add-row{grid-template-columns:1fr;}}
+  .actions{display:flex;gap:8px;flex-wrap:wrap;}
+  .theme-toggle{display:flex;gap:3px;padding:4px;background:var(--field);border:1px solid var(--border);border-radius:var(--r-sm);}
+  .theme-toggle button{background:transparent;color:var(--text-sec);border:none;border-radius:9px;padding:6px 12px;font-size:12px;font-weight:500;box-shadow:none;}
+  .theme-toggle button:hover:not([aria-pressed="true"]){color:var(--text);transform:none;filter:none;}
+  .theme-toggle button[aria-pressed="true"]{background:var(--bg-elev);color:var(--accent);box-shadow:var(--shadow-sm);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="nav">
+      <a href="./">← Comments dashboard</a>
+      <a href="./analytics.html" class="active">Brand analytics</a>
+    </div>
+    <div class="theme-toggle" role="group" aria-label="Theme">
+      <button data-theme="light" aria-pressed="false">Light</button>
+      <button data-theme="dark" aria-pressed="false">Dark</button>
+      <button data-theme="system" aria-pressed="true">Auto</button>
+    </div>
+  </div>
+
+  <h1>Brand analytics</h1>
+  <p class="sub">Every brand, every platform, in one view. Content pieces, followers, engagement — collected fresh on every open and exportable to Excel.</p>
+
+  <div class="card" id="authCard">
+    <div class="authbar">
+      <div class="whoami" id="whoami"></div>
+      <div style="flex:1"></div>
+      <input type="email" id="emailInput" placeholder="you@example.com">
+      <button id="signInBtn">Send sign-in link</button>
+      <button id="signOutBtn" class="ghost" style="display:none;">Sign out</button>
+    </div>
+    <p class="hint">Sign in to see the analytics — same allow-list as the comments dashboard.</p>
+    <div class="alert" id="authAlert"></div>
+  </div>
+
+  <div id="analyticsArea" style="display:none;">
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap;margin-bottom:14px;">
+        <h2 style="margin:0;">Totals across every brand</h2>
+        <div class="status" id="lastCollected"></div>
+      </div>
+      <div class="tiles" id="grandTiles">
+        <div class="tile"><div class="n" id="tContent">—</div><div class="l">Content pieces</div></div>
+        <div class="tile"><div class="n" id="tFollowers">—</div><div class="l">Followers</div></div>
+        <div class="tile"><div class="n" id="tViews">—</div><div class="l">Views</div></div>
+        <div class="tile"><div class="n" id="tComments">—</div><div class="l">Comments</div></div>
+        <div class="tile"><div class="n" id="tEngagement">—</div><div class="l">Engagement</div></div>
+      </div>
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        <div class="progress-log" id="progressLog">Idle.</div>
+      </div>
+      <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap;">
+        <button id="collectBtn">Collect snapshot</button>
+        <button id="exportBtn" class="ghost">Export to Excel…</button>
+        <button id="exportCsvBtn" class="ghost">Export CSV</button>
+      </div>
+      <div class="alert" id="collectAlert"></div>
+      <p class="hint">Views on Facebook and Instagram are counted for <b>video posts and reels only</b>, because pulling per-photo view counts needs one extra API call per post. YouTube views are the real lifetime channel total.</p>
+    </div>
+
+    <div class="card">
+      <h2>Per-source breakdown</h2>
+      <div style="overflow-x:auto;">
+        <table id="breakdownTable">
+          <thead>
+            <tr>
+              <th>Brand</th>
+              <th>Source</th>
+              <th class="num">Content</th>
+              <th class="num">Followers</th>
+              <th class="num">Views</th>
+              <th class="num">Likes / Reactions</th>
+              <th class="num">Comments</th>
+              <th class="num">Shares</th>
+              <th class="num">Engagement</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="breakdownBody">
+            <tr><td colspan="10" class="empty" id="emptyRow">No sources yet — configure them below.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin-bottom:6px;">
+        <h2 style="margin:0;">Sources</h2>
+        <button id="seedBtn" class="ghost tiny">Reset to default brands</button>
+      </div>
+      <p class="hint" style="margin-top:0;margin-bottom:14px;">
+        A "source" is one social account. Each one is tagged with a brand so we can total per-brand.
+        Facebook and Instagram sources are auto-discovered from Pages assigned to <code>dashboard-bot</code> — pick from the dropdown. YouTube uses a channel handle like <code>@IndianFarmerOfficial</code>.
+      </p>
+
+      <div id="sourceList"></div>
+
+      <div class="add-row">
+        <div>
+          <label for="addBrand">Brand</label>
+          <input type="text" id="addBrand" placeholder="e.g. Indian Farmer">
+        </div>
+        <div>
+          <label for="addPlatform">Platform</label>
+          <select id="addPlatform">
+            <option value="youtube">YouTube</option>
+            <option value="facebook">Facebook</option>
+            <option value="instagram">Instagram</option>
+          </select>
+        </div>
+        <div>
+          <label id="addSourceLabel" for="addSource">YouTube handle</label>
+          <input type="text" id="addSource" placeholder="@channelhandle">
+          <select id="addSourceSelect" style="display:none;"></select>
+        </div>
+        <div>
+          <button id="addSourceBtn">Add source</button>
+        </div>
+      </div>
+      <div class="alert" id="addAlert"></div>
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+'use strict';
+
+/* ---------- shared config, matches the comments dashboard ---------- */
+
+const SUPABASE_URL = 'https://aycfiqndcavzgipgurih.supabase.co';
+const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_Fb5vTDz7dWlfk2-l7i4LAg_XRlCYwH2';
+const GRAPH_URL = 'https://graph.facebook.com/v21.0/';
+const PBADGE = { youtube: 'YT', facebook: 'FB', instagram: 'IG' };
+
+/* Preloaded brand defaults for first-run seed. YT handles known; FB/IG Pages are
+   auto-picked from the Pages the shared System User can see. */
+const BRAND_DEFAULTS = [
+  { brand: 'Indian Farmer',         platform: 'youtube',   handle: '@IndianFarmerOfficial' },
+  { brand: 'Indian Farmer Courses', platform: 'youtube',   handle: '@indianfarmer.courses' },
+  { brand: 'Santosh Jadhav',        platform: 'youtube',   handle: '@santoshjadhav' },
+];
+/* Brand -> preferred FB Page name (case-insensitive substring match). If the
+   shared token can't see the Page, we skip it silently. */
+const BRAND_META_HINTS = [
+  { brand: 'Indian Farmer',         match: /^indian farmer$/i },
+  { brand: 'Indian Farmer Courses', match: /courses by indian farmer/i },
+  { brand: 'Santosh Jadhav',        match: /santosh jadhav/i },
+];
+
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+let session = null;
+let sources = [];        // rows from analytics_sources for this user
+let lastSnapshot = {};   // source_id -> latest totals + status, shown in the table
+let metaPagesCache = null;
+
+const $ = id => document.getElementById(id);
+const fmt = n => (n == null || isNaN(n)) ? '—' : Number(n).toLocaleString();
+const escapeHtml = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+/* Auto-refreshes the sign-in token when it's within 5 minutes of expiry, so a
+   long snapshot run (Meta paging through 2000+ posts) doesn't die mid-way. */
+let refreshingSession = null;
+async function ensureFreshSession() {
+  if (!session) return;
+  const ms = (session.expires_at ? session.expires_at * 1000 : 0) - Date.now();
+  if (ms > 5 * 60 * 1000) return;
+  if (!refreshingSession) {
+    refreshingSession = sb.auth.refreshSession().finally(() => { refreshingSession = null; });
+  }
+  const { data, error } = await refreshingSession;
+  if (!error && data?.session) session = data.session;
+}
+
+async function proxied(fnPath, body, _retry) {
+  await ensureFreshSession();
+  const res = await fetch(SUPABASE_URL + '/functions/v1/' + fnPath, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
+    body: JSON.stringify(body)
+  });
+  if (res.status === 401 && !_retry) {
+    const { error } = await sb.auth.refreshSession();
+    if (!error) return proxied(fnPath, body, true);
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { const e = new Error(data?.error?.message || `${fnPath} error`); e.status = res.status; throw e; }
+  return data;
+}
+
+const ytFetch   = (endpoint, params)         => proxied('yt-proxy',   { endpoint, params });
+const metaFetch = (endpoint, params, action, page_id) =>
+  proxied('meta-proxy', action ? { action, page_id } : { endpoint, params, page_id });
+
+/* ---------- theme toggle ---------- */
+
+async function applyTheme(mode) {
+  if (mode === 'system') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', mode);
+  document.querySelectorAll('.theme-toggle button').forEach(b =>
+    b.setAttribute('aria-pressed', String(b.dataset.theme === mode)));
+  try { localStorage.setItem('theme', mode); } catch {}
+}
+(function initTheme(){
+  let saved = 'system';
+  try { saved = localStorage.getItem('theme') || 'system'; } catch {}
+  applyTheme(saved);
+  document.querySelectorAll('.theme-toggle button').forEach(btn =>
+    btn.addEventListener('click', () => applyTheme(btn.dataset.theme)));
+})();
+
+/* ---------- auth ---------- */
+
+function updateAuthUI() {
+  const signedIn = !!session;
+  $('signInBtn').style.display = signedIn ? 'none' : 'inline-block';
+  $('signOutBtn').style.display = signedIn ? 'inline-block' : 'none';
+  $('emailInput').style.display = signedIn ? 'none' : 'inline-block';
+  $('analyticsArea').style.display = signedIn ? 'block' : 'none';
+  if (signedIn) {
+    const email = session.user.email || '';
+    const initials = (email.replace(/@.*/, '').replace(/[^a-z0-9]/gi, '').slice(0,2) || 'U').toUpperCase();
+    $('whoami').innerHTML = `<span class="avatar">${escapeHtml(initials)}</span>` +
+      `<span class="whoinfo"><b>${escapeHtml(email)}</b><span class="whostatus"><span class="dot"></span>Signed in</span></span>`;
+  } else {
+    $('whoami').innerHTML = `<span class="avatar off">–</span>` +
+      `<span class="whoinfo"><b>Not signed in</b><span class="whostatus"><span class="dot off"></span>Analytics is signed-in only</span></span>`;
+  }
+}
+
+$('signInBtn').addEventListener('click', async () => {
+  const email = $('emailInput').value.trim();
+  if (!email) { showAlert('authAlert', 'Enter your email first.'); return; }
+  $('signInBtn').disabled = true;
+  const { error } = await sb.auth.signInWithOtp({
+    email, options: { emailRedirectTo: location.origin + location.pathname }
+  });
+  $('signInBtn').disabled = false;
+  showAlert('authAlert', error ? 'Could not send link: ' + error.message
+    : `Sign-in link sent to ${email}. Open it on this device to finish.`, !error);
+});
+$('signOutBtn').addEventListener('click', async () => { await sb.auth.signOut(); });
+
+sb.auth.onAuthStateChange(async (_ev, newSession) => {
+  const wasIn = !!session;
+  session = newSession;
+  updateAuthUI();
+  if (!wasIn && session) await onSignedIn();
+});
+
+function showAlert(id, msg, ok) {
+  const el = $(id);
+  if (!msg) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.style.borderLeftColor = ok ? 'var(--accent)' : 'var(--danger)';
+  el.style.background = ok ? 'var(--accent-light)' : 'rgba(192,64,47,.09)';
+  el.textContent = msg;
+}
+
+/* ---------- source management ---------- */
+
+async function loadSources() {
+  const { data, error } = await sb.from('analytics_sources')
+    .select('*').order('brand').order('platform');
+  if (error) throw error;
+  sources = data || [];
+}
+
+async function loadLatestSnapshots() {
+  if (!sources.length) { lastSnapshot = {}; return; }
+  const ids = sources.map(s => s.id);
+  // Pull the most recent snapshot per source. Small dataset (one row per source
+  // per open) so a client-side reduce is fine.
+  const { data, error } = await sb.from('analytics_snapshots')
+    .select('source_id,captured_at,totals')
+    .in('source_id', ids)
+    .order('captured_at', { ascending: false });
+  if (error) throw error;
+  lastSnapshot = {};
+  for (const row of (data || [])) {
+    if (!lastSnapshot[row.source_id]) lastSnapshot[row.source_id] = row;
+  }
+}
+
+async function loadMetaPagesOnce() {
+  if (metaPagesCache) return metaPagesCache;
+  try {
+    const r = await metaFetch(null, null, 'pages');
+    metaPagesCache = r.pages || [];
+  } catch (e) { metaPagesCache = []; }
+  return metaPagesCache;
+}
+
+async function seedDefaultsIfEmpty() {
+  if (sources.length) return;
+  const userId = session.user.id;
+  const toInsert = [];
+
+  // 1) YouTube — resolve each preloaded handle to a channel id.
+  for (const d of BRAND_DEFAULTS) {
+    if (d.platform !== 'youtube') continue;
+    try {
+      const handle = d.handle.startsWith('@') ? d.handle.slice(1) : d.handle;
+      const r = await ytFetch('channels', { part: 'id,snippet', forHandle: handle });
+      const ch = (r.items || [])[0];
+      if (ch) toInsert.push({
+        user_id: userId, brand: d.brand, platform: 'youtube',
+        source_id: ch.id, label: '@' + (ch.snippet?.customUrl || handle)
+      });
+    } catch { /* leave for the user to add manually */ }
+  }
+
+  // 2) FB + IG — from Pages the token already sees. Match by brand-name hint.
+  const pages = await loadMetaPagesOnce();
+  for (const hint of BRAND_META_HINTS) {
+    const page = pages.find(p => hint.match.test(p.page_name || ''));
+    if (!page) continue;
+    toInsert.push({
+      user_id: userId, brand: hint.brand, platform: 'facebook',
+      source_id: page.page_id, label: page.page_name
+    });
+    if (page.ig_user_id) toInsert.push({
+      user_id: userId, brand: hint.brand, platform: 'instagram',
+      source_id: page.ig_user_id, label: '@' + (page.ig_username || page.page_name)
+    });
+  }
+
+  if (!toInsert.length) return;
+  const { error } = await sb.from('analytics_sources').insert(toInsert);
+  if (error) throw error;
+  await loadSources();
+}
+
+function renderSourceList() {
+  const el = $('sourceList');
+  if (!sources.length) {
+    el.innerHTML = `<p class="empty" style="padding:16px 0;">No sources yet. Add one below, or click <b>Reset to default brands</b>.</p>`;
+    return;
+  }
+  el.innerHTML = sources.map(s => `
+    <div class="src-row" data-id="${escapeHtml(s.id)}">
+      <div><span class="pbadge ${s.platform}">${PBADGE[s.platform]}</span> <b>${escapeHtml(s.brand)}</b></div>
+      <div class="sub">${escapeHtml(s.platform)}</div>
+      <div>
+        <div class="lbl">${escapeHtml(s.label || s.source_id)}</div>
+        <div class="sub"><code>${escapeHtml(s.source_id)}</code></div>
+      </div>
+      <div class="actions">
+        <button class="ghost tiny" data-act="rebrand">Rename brand</button>
+        <button class="danger tiny" data-act="remove">Remove</button>
+      </div>
+    </div>
+  `).join('');
+  el.querySelectorAll('.src-row').forEach(row => {
+    const id = row.dataset.id;
+    row.querySelector('[data-act="rebrand"]').addEventListener('click', () => renameBrand(id));
+    row.querySelector('[data-act="remove"]').addEventListener('click', () => removeSource(id));
+  });
+}
+
+async function renameBrand(id) {
+  const s = sources.find(x => x.id === id);
+  if (!s) return;
+  const next = prompt('Brand name for this source:', s.brand);
+  if (!next || next === s.brand) return;
+  const { error } = await sb.from('analytics_sources').update({ brand: next.trim() }).eq('id', id);
+  if (error) { alert('Rename failed: ' + error.message); return; }
+  await loadSources();
+  renderSourceList();
+  renderBreakdown();
+}
+
+async function removeSource(id) {
+  const s = sources.find(x => x.id === id);
+  if (!s) return;
+  if (!confirm(`Remove ${s.brand} · ${s.platform} (${s.label || s.source_id})? Its snapshots will also be deleted.`)) return;
+  const { error } = await sb.from('analytics_sources').delete().eq('id', id);
+  if (error) { alert('Remove failed: ' + error.message); return; }
+  delete lastSnapshot[id];
+  await loadSources();
+  renderSourceList();
+  renderBreakdown();
+}
+
+$('addPlatform').addEventListener('change', updateAddForm);
+async function updateAddForm() {
+  const p = $('addPlatform').value;
+  const isMeta = p === 'facebook' || p === 'instagram';
+  $('addSourceLabel').textContent =
+    p === 'youtube' ? 'YouTube handle' :
+    p === 'facebook' ? 'Facebook Page' : 'Instagram account (via linked Page)';
+  $('addSource').style.display = isMeta ? 'none' : 'block';
+  $('addSourceSelect').style.display = isMeta ? 'block' : 'none';
+  if (isMeta) {
+    const pages = await loadMetaPagesOnce();
+    const eligible = p === 'instagram' ? pages.filter(x => x.ig_user_id) : pages;
+    if (!eligible.length) {
+      $('addSourceSelect').innerHTML = `<option value="">No ${p === 'instagram' ? 'linked Instagram' : 'Pages'} assigned to the token</option>`;
+    } else {
+      $('addSourceSelect').innerHTML = eligible.map(pg => {
+        const value = p === 'instagram' ? pg.ig_user_id : pg.page_id;
+        const label = p === 'instagram' ? ('@' + (pg.ig_username || pg.page_name)) : pg.page_name;
+        return `<option value="${escapeHtml(value)}" data-label="${escapeHtml(label)}">${escapeHtml(label)}</option>`;
+      }).join('');
+    }
+  }
+}
+
+$('addSourceBtn').addEventListener('click', async () => {
+  const brand = $('addBrand').value.trim();
+  const platform = $('addPlatform').value;
+  if (!brand) { showAlert('addAlert', 'Enter a brand name.'); return; }
+  let source_id, label;
+  try {
+    if (platform === 'youtube') {
+      let raw = $('addSource').value.trim();
+      if (!raw) { showAlert('addAlert', 'Enter a YouTube handle or channel id.'); return; }
+      if (raw.startsWith('@')) raw = raw.slice(1);
+      if (/^UC[\w-]{22}$/.test(raw)) {
+        // A raw channel id
+        source_id = raw; label = raw;
+      } else {
+        const r = await ytFetch('channels', { part: 'id,snippet', forHandle: raw });
+        const ch = (r.items || [])[0];
+        if (!ch) { showAlert('addAlert', 'That YouTube handle didn\'t match a channel.'); return; }
+        source_id = ch.id; label = '@' + (ch.snippet?.customUrl || raw);
+      }
+    } else {
+      const sel = $('addSourceSelect');
+      source_id = sel.value;
+      label = sel.options[sel.selectedIndex]?.dataset?.label || sel.value;
+      if (!source_id) { showAlert('addAlert', 'Pick a Page.'); return; }
+    }
+    $('addSourceBtn').disabled = true;
+    const { error } = await sb.from('analytics_sources').insert({
+      user_id: session.user.id, brand, platform, source_id, label
+    });
+    if (error) throw error;
+    $('addBrand').value = ''; $('addSource').value = '';
+    showAlert('addAlert', 'Added.', true);
+    await loadSources();
+    renderSourceList();
+    renderBreakdown();
+  } catch (e) {
+    showAlert('addAlert', 'Could not add: ' + (e.message || e));
+  } finally {
+    $('addSourceBtn').disabled = false;
+  }
+});
+
+$('seedBtn').addEventListener('click', async () => {
+  if (sources.length && !confirm('This adds any missing default sources (Indian Farmer, Indian Farmer Courses, Santosh Jadhav on YT/FB/IG). Existing ones aren\'t touched.')) return;
+  try {
+    await seedDefaultsIfEmpty();
+    if (!sources.length) {   // seedDefaultsIfEmpty short-circuits when non-empty; force a re-seed for missing rows
+      const want = [];
+      for (const d of BRAND_DEFAULTS) if (d.platform === 'youtube') want.push({ brand: d.brand, platform: 'youtube', handle: d.handle });
+      for (const h of BRAND_META_HINTS) want.push({ brand: h.brand, platform: 'facebook', hint: h.match }, { brand: h.brand, platform: 'instagram', hint: h.match });
+      // (Re-seed logic delegated to seedDefaultsIfEmpty on empty; explicit non-empty top-ups happen via the add form.)
+    }
+    await loadSources();
+    renderSourceList();
+    renderBreakdown();
+    showAlert('addAlert', 'Defaults ready.', true);
+  } catch (e) {
+    showAlert('addAlert', 'Seed failed: ' + (e.message || e));
+  }
+});
+
+/* ---------- snapshot collection ---------- */
+
+async function collectYoutube(source) {
+  // channel.statistics is one API call and returns lifetime views, subs, and
+  // video count. That covers content + followers + views.
+  const r = await ytFetch('channels', { part: 'statistics,snippet', id: source.source_id });
+  const ch = (r.items || [])[0];
+  if (!ch) throw new Error('YouTube channel not found: ' + source.source_id);
+  const s = ch.statistics || {};
+  const content = +s.videoCount || 0;
+  const followers = +s.subscriberCount || 0;
+  const views = +s.viewCount || 0;
+
+  // Per-video like+comment sums: page through the uploads playlist, then batch
+  // videos.list?id=... 50 at a time. Bounded so a very large channel doesn't
+  // spin forever.
+  let likes = 0, comments = 0, seen = 0;
+  try {
+    const uploads = ch?.contentDetails?.relatedPlaylists?.uploads;
+    let uploadsId = uploads;
+    if (!uploadsId) {
+      const r2 = await ytFetch('channels', { part: 'contentDetails', id: source.source_id });
+      uploadsId = r2.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
+    }
+    if (uploadsId) {
+      const ids = [];
+      let pageToken = '';
+      while (ids.length < 5000) {
+        const p = await ytFetch('playlistItems', { part: 'contentDetails', playlistId: uploadsId, maxResults: 50, pageToken });
+        (p.items || []).forEach(it => { if (it.contentDetails?.videoId) ids.push(it.contentDetails.videoId); });
+        pageToken = p.nextPageToken || '';
+        if (!pageToken) break;
+      }
+      for (let i = 0; i < ids.length; i += 50) {
+        const chunk = ids.slice(i, i + 50);
+        const v = await ytFetch('videos', { part: 'statistics', id: chunk.join(',') });
+        for (const vi of (v.items || [])) {
+          likes    += +(vi.statistics?.likeCount    || 0);
+          comments += +(vi.statistics?.commentCount || 0);
+          seen++;
+        }
+      }
+    }
+  } catch { /* engagement rollup is best-effort — top-line still shown */ }
+
+  return {
+    content, followers, views, likes, comments, shares: null,
+    engagement: likes + comments,
+    _note: seen ? '' : 'per-video engagement unavailable'
+  };
+}
+
+/* Sum reactions/comments/shares across every post on a Facebook Page. Uses the
+   already-fixed session-refresh so a big Page doesn't die mid-run. */
+async function collectFacebook(source, onProgress) {
+  const info = await metaFetch(source.source_id, {
+    fields: 'name,fan_count,followers_count'
+  }, null, source.source_id);
+  const followers = info.followers_count ?? info.fan_count ?? null;
+
+  let content = 0, likes = 0, comments = 0, shares = 0;
+  let after = '';
+  while (true) {
+    const params = {
+      fields: 'reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0),shares',
+      limit: '100'
+    };
+    if (after) params.after = after;
+    const r = await metaFetch(source.source_id + '/posts', params, null, source.source_id);
+    for (const p of (r.data || [])) {
+      content++;
+      likes    += p.reactions?.summary?.total_count || 0;
+      comments += p.comments?.summary?.total_count  || 0;
+      shares   += p.shares?.count                   || 0;
+    }
+    if (onProgress) onProgress(content);
+    after = r.paging?.cursors?.after || '';
+    if (!r.paging?.next || !after) break;
+    if (content > 20000) break;   // safety
+  }
+  return {
+    content, followers, views: null,
+    likes, comments, shares,
+    engagement: likes + comments + shares,
+    _note: 'photo-post views not counted (see note)'
+  };
+}
+
+async function collectInstagram(source, onProgress) {
+  const info = await metaFetch(source.source_id, {
+    fields: 'media_count,followers_count,username'
+  }, null, null);
+  const content   = info.media_count      ?? null;
+  const followers = info.followers_count  ?? null;
+
+  let likes = 0, comments = 0, seen = 0;
+  let after = '';
+  while (true) {
+    const params = { fields: 'like_count,comments_count', limit: '100' };
+    if (after) params.after = after;
+    const r = await metaFetch(source.source_id + '/media', params, null, null);
+    for (const m of (r.data || [])) {
+      likes    += m.like_count     || 0;
+      comments += m.comments_count || 0;
+      seen++;
+    }
+    if (onProgress) onProgress(seen);
+    after = r.paging?.cursors?.after || '';
+    if (!r.paging?.next || !after) break;
+    if (seen > 20000) break;
+  }
+  return {
+    content: content ?? seen,
+    followers, views: null,
+    likes, comments, shares: null,
+    engagement: likes + comments,
+    _note: 'photo views not counted (Reels views not summed here — see note)'
+  };
+}
+
+async function collectOne(source, onProgress) {
+  if (source.platform === 'youtube')   return collectYoutube(source);
+  if (source.platform === 'facebook')  return collectFacebook(source, onProgress);
+  if (source.platform === 'instagram') return collectInstagram(source, onProgress);
+  throw new Error('Unknown platform: ' + source.platform);
+}
+
+let collecting = false;
+$('collectBtn').addEventListener('click', async () => {
+  if (collecting) return;
+  if (!sources.length) { showAlert('collectAlert', 'Add at least one source first.'); return; }
+  collecting = true;
+  $('collectBtn').disabled = true;
+  $('progressWrap').style.display = 'block';
+  showAlert('collectAlert', '');
+
+  let done = 0;
+  for (const s of sources) {
+    setProgress(Math.round((done / sources.length) * 100),
+      `[${done + 1}/${sources.length}] ${s.brand} · ${s.platform}`);
+    setBreakdownStatus(s.id, 'Collecting…');
+    try {
+      const totals = await collectOne(s, (n) => setProgress(
+        Math.round((done / sources.length) * 100),
+        `[${done + 1}/${sources.length}] ${s.brand} · ${s.platform} — ${n.toLocaleString()} so far`));
+      const { data } = await sb.from('analytics_snapshots')
+        .insert({ source_id: s.id, totals }).select('captured_at').single();
+      lastSnapshot[s.id] = { source_id: s.id, totals, captured_at: data?.captured_at || new Date().toISOString() };
+      setBreakdownStatus(s.id, 'ok', totals._note || '');
+    } catch (e) {
+      setBreakdownStatus(s.id, 'err', e.message || String(e));
+    }
+    done++;
+    renderBreakdown();
+  }
+  setProgress(100, 'Done.');
+  $('collectBtn').disabled = false;
+  collecting = false;
+});
+
+function setProgress(pct, txt) {
+  $('progressFill').style.width = pct + '%';
+  if (txt) $('progressLog').textContent = txt;
+}
+
+/* ---------- table + tiles ---------- */
+
+function fmtWhen(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const min = Math.round((Date.now() - d.getTime()) / 60000);
+  if (min < 1) return 'just now';
+  if (min < 60) return min + ' min ago';
+  const hr = Math.round(min / 60);
+  if (hr < 24) return hr + ' h ago';
+  return d.toLocaleDateString();
+}
+
+function grouped() {
+  // brand -> [ {source, totals} ]
+  const g = {};
+  for (const s of sources) {
+    (g[s.brand] ||= []).push({ s, totals: lastSnapshot[s.id]?.totals || null });
+  }
+  return g;
+}
+
+function renderBreakdown() {
+  const body = $('breakdownBody');
+  if (!sources.length) {
+    body.innerHTML = `<tr><td colspan="10" class="empty">No sources yet — add one below.</td></tr>`;
+    updateTiles();
+    return;
+  }
+  const g = grouped();
+  const brands = Object.keys(g).sort();
+  const rows = [];
+  const grand = { content:0, followers:0, views:0, likes:0, comments:0, shares:0, engagement:0 };
+
+  for (const brand of brands) {
+    const items = g[brand];
+    const bt = { content:0, followers:0, views:0, likes:0, comments:0, shares:0, engagement:0 };
+    for (const { s, totals } of items) {
+      const t = totals || {};
+      const status = lastSnapshot[s.id]
+        ? `<span class="status ok" title="${escapeHtml(t._note || '')}">${escapeHtml(fmtWhen(lastSnapshot[s.id].captured_at))}${t._note ? ' · *' : ''}</span>`
+        : `<span class="status">—</span>`;
+      rows.push(`<tr data-id="${s.id}">
+        <td><b>${escapeHtml(brand)}</b></td>
+        <td><span class="pbadge ${s.platform}">${PBADGE[s.platform]}</span> ${escapeHtml(s.label || s.source_id)}</td>
+        <td class="num">${fmt(t.content)}</td>
+        <td class="num">${fmt(t.followers)}</td>
+        <td class="num">${fmt(t.views)}</td>
+        <td class="num">${fmt(t.likes)}</td>
+        <td class="num">${fmt(t.comments)}</td>
+        <td class="num">${fmt(t.shares)}</td>
+        <td class="num">${fmt(t.engagement)}</td>
+        <td>${status}</td>
+      </tr>`);
+      for (const k of Object.keys(bt)) if (typeof t[k] === 'number') bt[k] += t[k];
+    }
+    rows.push(`<tr class="brand-total">
+      <td colspan="2">${escapeHtml(brand)} — total</td>
+      <td class="num">${fmt(bt.content)}</td>
+      <td class="num">${fmt(bt.followers)}</td>
+      <td class="num">${fmt(bt.views)}</td>
+      <td class="num">${fmt(bt.likes)}</td>
+      <td class="num">${fmt(bt.comments)}</td>
+      <td class="num">${fmt(bt.shares)}</td>
+      <td class="num">${fmt(bt.engagement)}</td>
+      <td></td>
+    </tr>`);
+    for (const k of Object.keys(grand)) grand[k] += bt[k];
+  }
+  rows.push(`<tr class="grand-total">
+    <td colspan="2">Grand total</td>
+    <td class="num">${fmt(grand.content)}</td>
+    <td class="num">${fmt(grand.followers)}</td>
+    <td class="num">${fmt(grand.views)}</td>
+    <td class="num">${fmt(grand.likes)}</td>
+    <td class="num">${fmt(grand.comments)}</td>
+    <td class="num">${fmt(grand.shares)}</td>
+    <td class="num">${fmt(grand.engagement)}</td>
+    <td></td>
+  </tr>`);
+  body.innerHTML = rows.join('');
+  updateTiles(grand);
+  const latest = Object.values(lastSnapshot).reduce((m, r) => r.captured_at > m ? r.captured_at : m, '');
+  $('lastCollected').textContent = latest ? 'Last collected ' + fmtWhen(latest) : 'Never collected — click "Collect snapshot".';
+}
+
+function updateTiles(grand) {
+  if (!grand) grand = { content:0, followers:0, views:0, comments:0, engagement:0 };
+  $('tContent').textContent    = fmt(grand.content);
+  $('tFollowers').textContent  = fmt(grand.followers);
+  $('tViews').textContent      = fmt(grand.views);
+  $('tComments').textContent   = fmt(grand.comments);
+  $('tEngagement').textContent = fmt(grand.engagement);
+}
+
+function setBreakdownStatus(sourceId, kind, extra) {
+  const row = document.querySelector(`tr[data-id="${sourceId}"] td:last-child`);
+  if (!row) return;
+  if (kind === 'ok')   row.innerHTML = `<span class="status ok">just now${extra ? ' · *' : ''}</span>`;
+  else if (kind === 'err') row.innerHTML = `<span class="status err" title="${escapeHtml(extra || '')}">error</span>`;
+  else row.innerHTML = `<span class="status">${escapeHtml(kind)}</span>`;
+}
+
+/* ---------- export ---------- */
+
+function slug(s) {
+  return (s || 'analytics').normalize('NFC')
+    .replace(/[^\p{L}\p{N}\p{M}]+/gu, '-')
+    .replace(/^-+|-+$/g, '') || 'analytics';
+}
+
+function buildTotalsRows() {
+  const g = grouped();
+  const cols = ['brand','platform','source','content','followers','views','likes_reactions','comments','shares','engagement','collected_at','note'];
+  const rows = [cols];
+  const grand = { content:0, followers:0, views:0, likes:0, comments:0, shares:0, engagement:0 };
+  const brands = Object.keys(g).sort();
+  for (const brand of brands) {
+    const bt = { content:0, followers:0, views:0, likes:0, comments:0, shares:0, engagement:0 };
+    for (const { s } of g[brand]) {
+      const snap = lastSnapshot[s.id];
+      const t = snap?.totals || {};
+      rows.push([brand, s.platform, s.label || s.source_id,
+        t.content ?? '', t.followers ?? '', t.views ?? '',
+        t.likes ?? '', t.comments ?? '', t.shares ?? '',
+        t.engagement ?? '', snap?.captured_at || '', t._note || '']);
+      for (const k of Object.keys(bt)) if (typeof t[k] === 'number') bt[k] += t[k];
+    }
+    rows.push([brand + ' — total', '', '',
+      bt.content, bt.followers, bt.views, bt.likes, bt.comments, bt.shares, bt.engagement, '', '']);
+    for (const k of Object.keys(grand)) grand[k] += bt[k];
+  }
+  rows.push(['GRAND TOTAL', '', '',
+    grand.content, grand.followers, grand.views, grand.likes, grand.comments, grand.shares, grand.engagement, '', '']);
+  return rows;
+}
+
+async function buildHistoryRows() {
+  const ids = sources.map(s => s.id);
+  if (!ids.length) return [['brand','platform','source','captured_at','content','followers','views','likes','comments','shares','engagement']];
+  const { data, error } = await sb.from('analytics_snapshots')
+    .select('source_id,captured_at,totals').in('source_id', ids)
+    .order('captured_at', { ascending: false }).limit(5000);
+  if (error) throw error;
+  const map = Object.fromEntries(sources.map(s => [s.id, s]));
+  const rows = [['brand','platform','source','captured_at','content','followers','views','likes','comments','shares','engagement']];
+  for (const r of (data || [])) {
+    const s = map[r.source_id]; if (!s) continue;
+    const t = r.totals || {};
+    rows.push([s.brand, s.platform, s.label || s.source_id, r.captured_at,
+      t.content ?? '', t.followers ?? '', t.views ?? '',
+      t.likes ?? '', t.comments ?? '', t.shares ?? '', t.engagement ?? '']);
+  }
+  return rows;
+}
+
+$('exportBtn').addEventListener('click', async () => {
+  try {
+    const totals = buildTotalsRows();
+    const history = await buildHistoryRows();
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(totals),  'Totals');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(history), 'History');
+    const brand = sources[0]?.brand || 'analytics';
+    XLSX.writeFile(wb, `${slug(brand)}-analytics-${new Date().toISOString().slice(0,10)}.xlsx`);
+  } catch (e) { showAlert('collectAlert', 'Export failed: ' + (e.message || e)); }
+});
+
+$('exportCsvBtn').addEventListener('click', () => {
+  try {
+    const rows = buildTotalsRows();
+    const csv = rows.map(r => r.map(v => {
+      const s = String(v ?? '');
+      return /[,\n"]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    }).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    const brand = sources[0]?.brand || 'analytics';
+    a.href = URL.createObjectURL(blob);
+    a.download = `${slug(brand)}-analytics-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 500);
+  } catch (e) { showAlert('collectAlert', 'CSV export failed: ' + (e.message || e)); }
+});
+
+/* ---------- boot ---------- */
+
+async function onSignedIn() {
+  try {
+    await loadSources();
+    if (!sources.length) await seedDefaultsIfEmpty();
+    await loadLatestSnapshots();
+    renderSourceList();
+    renderBreakdown();
+    updateAddForm();
+  } catch (e) {
+    showAlert('collectAlert', 'Setup error: ' + (e.message || e));
+  }
+}
+
+(async function boot() {
+  updateAuthUI();
+  const { data } = await sb.auth.getSession();
+  if (data?.session) { session = data.session; updateAuthUI(); await onSignedIn(); }
+})();
+</script>
+</body>
+</html>

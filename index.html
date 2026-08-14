@@ -261,10 +261,17 @@
       <h1>YouTube comment dashboard</h1>
       <p class="sub">Pull every comment from a channel, playlist, or single video — browse it, chart it, export it.</p>
     </div>
-    <div class="theme-toggle" role="group" aria-label="Colour theme">
-      <button data-theme-set="auto">Auto</button>
-      <button data-theme-set="light">Light</button>
-      <button data-theme-set="dark">Dark</button>
+    <div style="display:flex;gap:14px;align-items:center;">
+      <a href="./analytics.html" style="color:var(--text-sec);text-decoration:none;font-size:13px;font-weight:600;padding:8px 14px;border-radius:10px;border:1px solid var(--border-strong);background:var(--field);transition:color var(--dur) var(--ease),border-color var(--dur) var(--ease);"
+         onmouseover="this.style.color='var(--accent)';this.style.borderColor='var(--accent)';"
+         onmouseout="this.style.color='var(--text-sec)';this.style.borderColor='var(--border-strong)';">
+        Brand analytics →
+      </a>
+      <div class="theme-toggle" role="group" aria-label="Colour theme">
+        <button data-theme-set="auto">Auto</button>
+        <button data-theme-set="light">Light</button>
+        <button data-theme-set="dark">Dark</button>
+      </div>
     </div>
   </div>
 
