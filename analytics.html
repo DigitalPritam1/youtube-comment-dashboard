@@ -1,13 +1,38 @@
 <!DOCTYPE html>
-<html lang="en">
+<!--
+  ╔═══════════════════════════════════════════════════════════╗
+  ║   Designed & developed by Pritam Sonone                   ║
+  ║   Portfolio: https://www.digitalpritam.in                 ║
+  ║   Contact:   contact@digitalpritam.in                     ║
+  ╚═══════════════════════════════════════════════════════════╝
+-->
+<html lang="en" data-creator="Pritam Sonone">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Brand Analytics</title>
+<meta name="designer"    content="Pritam Sonone">
+<meta name="designer-url" content="https://www.digitalpritam.in">
+<meta name="designer-email" content="contact@digitalpritam.in">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "CreativeWork",
+  "name": "Brand Analytics Dashboard",
+  "creator": {
+    "@type": "Person",
+    "name": "Pritam Sonone",
+    "url": "https://www.digitalpritam.in",
+    "email": "contact@digitalpritam.in"
+  }
+}
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
   :root{
@@ -112,7 +137,18 @@
   .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:8px;}
   .tile{background:var(--card-2);border:1px solid var(--border);border-radius:var(--r-md);padding:20px 22px;box-shadow:var(--shadow-sm);}
   .tile .n{font-size:32px;font-weight:800;letter-spacing:-.024em;color:var(--accent);line-height:1.05;}
+  .tile .exact{font-size:12px;color:var(--text-mut);margin-top:4px;font-variant-numeric:tabular-nums;font-family:var(--mono);}
   .tile .l{font-size:12px;color:var(--text-mut);margin-top:6px;text-transform:uppercase;letter-spacing:.05em;font-weight:600;}
+  .timeframe{margin-top:14px;padding:12px 14px;background:var(--card-2);border:1px solid var(--border);border-radius:var(--r-sm);display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;color:var(--text-sec);}
+  .tf-label{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-mut);font-weight:600;}
+  .tf-arrow{color:var(--text-mut);}
+  .tf-note{color:var(--text-mut);font-size:12px;margin-left:auto;}
+  .filters{display:flex;gap:14px;align-items:end;flex-wrap:wrap;margin-bottom:16px;}
+  .filter-group{display:flex;flex-direction:column;gap:4px;}
+  .filter-group label{margin-bottom:0;}
+  .filter-group select{padding:8px 12px;font-size:13px;min-width:160px;}
+  .compact{font-variant-numeric:tabular-nums;}
+  .compact .sub{font-size:11px;color:var(--text-mut);display:block;font-family:var(--mono);}
   .pbadge{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.03em;padding:2px 7px;border-radius:6px;margin-right:6px;vertical-align:middle;}
   .pbadge.youtube{background:rgba(192,64,47,.15);color:var(--danger);}
   .pbadge.facebook{background:rgba(37,99,235,.15);color:#3b82f6;}
@@ -185,11 +221,18 @@
         <div class="status" id="lastCollected"></div>
       </div>
       <div class="tiles" id="grandTiles">
-        <div class="tile"><div class="n" id="tContent">—</div><div class="l">Content pieces</div></div>
-        <div class="tile"><div class="n" id="tFollowers">—</div><div class="l">Followers</div></div>
-        <div class="tile"><div class="n" id="tViews">—</div><div class="l">Views</div></div>
-        <div class="tile"><div class="n" id="tComments">—</div><div class="l">Comments</div></div>
-        <div class="tile"><div class="n" id="tEngagement">—</div><div class="l">Engagement</div></div>
+        <div class="tile"><div class="n" id="tContent">—</div><div class="exact" id="tContentX"></div><div class="l">Content pieces</div></div>
+        <div class="tile"><div class="n" id="tFollowers">—</div><div class="exact" id="tFollowersX"></div><div class="l">Followers</div></div>
+        <div class="tile"><div class="n" id="tViews">—</div><div class="exact" id="tViewsX"></div><div class="l">Views</div></div>
+        <div class="tile"><div class="n" id="tComments">—</div><div class="exact" id="tCommentsX"></div><div class="l">Comments</div></div>
+        <div class="tile"><div class="n" id="tEngagement">—</div><div class="exact" id="tEngagementX"></div><div class="l">Engagement</div></div>
+      </div>
+      <div class="timeframe" id="timeframe" style="display:none;">
+        <span class="tf-label">Data covers</span>
+        <b id="tfFrom">—</b>
+        <span class="tf-arrow">→</span>
+        <b id="tfTo">now</b>
+        <span class="tf-note" id="tfNote"></span>
       </div>
       <div class="progress-wrap" id="progressWrap">
         <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
@@ -199,19 +242,37 @@
         <button id="collectBtn">Collect snapshot</button>
         <button id="exportBtn" class="ghost">Export to Excel…</button>
         <button id="exportCsvBtn" class="ghost">Export CSV</button>
+        <button id="exportPdfBtn" class="ghost">Export PDF</button>
       </div>
       <div class="alert" id="collectAlert"></div>
       <p class="hint">Views on Facebook and Instagram are counted for <b>video posts and reels only</b>, because pulling per-photo view counts needs one extra API call per post. YouTube views are the real lifetime channel total.</p>
     </div>
 
     <div class="card">
-      <h2>Per-source breakdown</h2>
+      <div class="filters">
+        <h2 style="margin:0;flex:1;">Per-source breakdown</h2>
+        <div class="filter-group">
+          <label for="filterPlatform">Platform</label>
+          <select id="filterPlatform">
+            <option value="">All platforms</option>
+            <option value="youtube">YouTube</option>
+            <option value="facebook">Facebook</option>
+            <option value="instagram">Instagram</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="filterBrand">Brand / channel</label>
+          <select id="filterBrand"><option value="">All brands</option></select>
+        </div>
+        <button id="filterReset" class="ghost tiny" title="Clear filters">Reset</button>
+      </div>
       <div style="overflow-x:auto;">
         <table id="breakdownTable">
           <thead>
             <tr>
               <th>Brand</th>
               <th>Source</th>
+              <th>Data since</th>
               <th class="num">Content</th>
               <th class="num">Followers</th>
               <th class="num">Views</th>
@@ -223,7 +284,7 @@
             </tr>
           </thead>
           <tbody id="breakdownBody">
-            <tr><td colspan="10" class="empty" id="emptyRow">No sources yet — configure them below.</td></tr>
+            <tr><td colspan="11" class="empty" id="emptyRow">No sources yet — configure them below.</td></tr>
           </tbody>
         </table>
       </div>
@@ -300,10 +361,50 @@ let session = null;
 let sources = [];        // rows from analytics_sources for this user
 let lastSnapshot = {};   // source_id -> latest totals + status, shown in the table
 let metaPagesCache = null;
+const filterState = { platform: '', brand: '' };
 
 const $ = id => document.getElementById(id);
 const fmt = n => (n == null || isNaN(n)) ? '—' : Number(n).toLocaleString();
+/* Compact scale: 12,345,678 -> "12.3M". Trailing zeros trimmed (2,000,000 -> "2M",
+   2,200,000 -> "2.2M". Under 1,000 stays as-is. Handles B, T for very large. */
+const SCALE = [
+  { n: 1e12, s: 'T' }, { n: 1e9, s: 'B' }, { n: 1e6, s: 'M' }, { n: 1e3, s: 'K' }
+];
+function fmtCompact(n) {
+  if (n == null || isNaN(n)) return '—';
+  const x = Number(n);
+  if (Math.abs(x) < 1000) return String(x);
+  for (const u of SCALE) {
+    if (Math.abs(x) >= u.n) {
+      const v = x / u.n;
+      const rounded = v >= 100 ? Math.round(v) : Math.round(v * 10) / 10;
+      const str = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+      return str.replace(/\.0$/, '') + u.s;
+    }
+  }
+  return String(x);
+}
+/* Cell that shows compact BIG + exact underneath, so the tile reads at a glance
+   and the exact number stays available. Suppressed when the value is unknown. */
+function fmtCell(n) {
+  if (n == null || isNaN(n)) return '<span>—</span>';
+  return `<span class="compact">${fmtCompact(n)}<span class="sub">${Number(n).toLocaleString()}</span></span>`;
+}
 const escapeHtml = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+/* Timeframe helpers: "since X" reads friendlier than a raw date, so parse ISO
+   -> "Jul 2024" (month + year) and let the tooltip show the full date. */
+function monthYear(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return '—';
+  return d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+}
+function fullDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return isNaN(d) ? '' : d.toLocaleDateString();
+}
 
 /* Auto-refreshes the sign-in token when it's within 5 minutes of expiry, so a
    long snapshot run (Meta paging through 2000+ posts) doesn't die mid-way. */
@@ -618,26 +719,23 @@ $('seedBtn').addEventListener('click', async () => {
 
 async function collectYoutube(source) {
   // channel.statistics is one API call and returns lifetime views, subs, and
-  // video count. That covers content + followers + views.
-  const r = await ytFetch('channels', { part: 'statistics,snippet', id: source.source_id });
+  // video count. That covers content + followers + views. snippet.publishedAt
+  // is when the channel was created — the honest "data since" date.
+  const r = await ytFetch('channels', { part: 'statistics,snippet,contentDetails', id: source.source_id });
   const ch = (r.items || [])[0];
   if (!ch) throw new Error('YouTube channel not found: ' + source.source_id);
   const s = ch.statistics || {};
   const content = +s.videoCount || 0;
   const followers = +s.subscriberCount || 0;
   const views = +s.viewCount || 0;
+  const since = ch.snippet?.publishedAt || null;
 
   // Per-video like+comment sums: page through the uploads playlist, then batch
   // videos.list?id=... 50 at a time. Bounded so a very large channel doesn't
   // spin forever.
   let likes = 0, comments = 0, seen = 0;
   try {
-    const uploads = ch?.contentDetails?.relatedPlaylists?.uploads;
-    let uploadsId = uploads;
-    if (!uploadsId) {
-      const r2 = await ytFetch('channels', { part: 'contentDetails', id: source.source_id });
-      uploadsId = r2.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
-    }
+    const uploadsId = ch?.contentDetails?.relatedPlaylists?.uploads;
     if (uploadsId) {
       const ids = [];
       let pageToken = '';
@@ -662,23 +760,26 @@ async function collectYoutube(source) {
   return {
     content, followers, views, likes, comments, shares: null,
     engagement: likes + comments,
+    since, until: new Date().toISOString(),
     _note: seen ? '' : 'per-video engagement unavailable'
   };
 }
 
 /* Sum reactions/comments/shares across every post on a Facebook Page. Uses the
-   already-fixed session-refresh so a big Page doesn't die mid-run. */
+   already-fixed session-refresh so a big Page doesn't die mid-run. Captures the
+   oldest post date seen -> honest "data since" for the timeframe row. */
 async function collectFacebook(source, onProgress) {
   const info = await metaFetch(source.source_id, {
-    fields: 'name,fan_count,followers_count'
+    fields: 'name,fan_count,followers_count,created_time'
   }, null, source.source_id);
   const followers = info.followers_count ?? info.fan_count ?? null;
+  let oldestPost = null;
 
   let content = 0, likes = 0, comments = 0, shares = 0;
   let after = '';
   while (true) {
     const params = {
-      fields: 'reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0),shares',
+      fields: 'created_time,reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0),shares',
       limit: '100'
     };
     if (after) params.after = after;
@@ -688,6 +789,7 @@ async function collectFacebook(source, onProgress) {
       likes    += p.reactions?.summary?.total_count || 0;
       comments += p.comments?.summary?.total_count  || 0;
       shares   += p.shares?.count                   || 0;
+      if (p.created_time && (!oldestPost || p.created_time < oldestPost)) oldestPost = p.created_time;
     }
     if (onProgress) onProgress(content);
     after = r.paging?.cursors?.after || '';
@@ -698,6 +800,10 @@ async function collectFacebook(source, onProgress) {
     content, followers, views: null,
     likes, comments, shares,
     engagement: likes + comments + shares,
+    // Prefer the Page's own created_time when Graph returns it; fall back to the
+    // oldest post seen (some Pages don't expose created_time to app tokens).
+    since: info.created_time || oldestPost,
+    until: new Date().toISOString(),
     _note: 'photo-post views not counted (see note)'
   };
 }
@@ -710,14 +816,16 @@ async function collectInstagram(source, onProgress) {
   const followers = info.followers_count  ?? null;
 
   let likes = 0, comments = 0, seen = 0;
+  let oldestMedia = null;
   let after = '';
   while (true) {
-    const params = { fields: 'like_count,comments_count', limit: '100' };
+    const params = { fields: 'like_count,comments_count,timestamp', limit: '100' };
     if (after) params.after = after;
     const r = await metaFetch(source.source_id + '/media', params, null, null);
     for (const m of (r.data || [])) {
       likes    += m.like_count     || 0;
       comments += m.comments_count || 0;
+      if (m.timestamp && (!oldestMedia || m.timestamp < oldestMedia)) oldestMedia = m.timestamp;
       seen++;
     }
     if (onProgress) onProgress(seen);
@@ -730,6 +838,8 @@ async function collectInstagram(source, onProgress) {
     followers, views: null,
     likes, comments, shares: null,
     engagement: likes + comments,
+    since: oldestMedia,
+    until: new Date().toISOString(),
     _note: 'photo views not counted (Reels views not summed here — see note)'
   };
 }
@@ -792,86 +902,139 @@ function fmtWhen(iso) {
   return d.toLocaleDateString();
 }
 
+/* Applies the active platform + brand filters. A source with no snapshot yet
+   still shows in the table (as "—") so you can see what's coming. */
+function filteredSources() {
+  return sources.filter(s =>
+    (!filterState.platform || s.platform === filterState.platform) &&
+    (!filterState.brand    || s.brand    === filterState.brand)
+  );
+}
+
 function grouped() {
-  // brand -> [ {source, totals} ]
   const g = {};
-  for (const s of sources) {
+  for (const s of filteredSources()) {
     (g[s.brand] ||= []).push({ s, totals: lastSnapshot[s.id]?.totals || null });
   }
   return g;
 }
 
+/* Sync the brand dropdown to the actual brands in play, preserving the current
+   choice if it still exists. */
+function refreshBrandFilter() {
+  const sel = $('filterBrand');
+  const brands = Array.from(new Set(sources.map(s => s.brand))).sort();
+  const prev = filterState.brand;
+  sel.innerHTML = `<option value="">All brands</option>` +
+    brands.map(b => `<option value="${escapeHtml(b)}"${b === prev ? ' selected' : ''}>${escapeHtml(b)}</option>`).join('');
+  if (prev && !brands.includes(prev)) { filterState.brand = ''; sel.value = ''; }
+}
+
 function renderBreakdown() {
+  refreshBrandFilter();
   const body = $('breakdownBody');
+  const visible = filteredSources();
   if (!sources.length) {
-    body.innerHTML = `<tr><td colspan="10" class="empty">No sources yet — add one below.</td></tr>`;
-    updateTiles();
+    body.innerHTML = `<tr><td colspan="11" class="empty">No sources yet — add one below.</td></tr>`;
+    updateTiles(); updateTimeframe(null, null);
+    return;
+  }
+  if (!visible.length) {
+    body.innerHTML = `<tr><td colspan="11" class="empty">No sources match the current filter.</td></tr>`;
+    updateTiles(); updateTimeframe(null, null);
     return;
   }
   const g = grouped();
   const brands = Object.keys(g).sort();
   const rows = [];
   const grand = { content:0, followers:0, views:0, likes:0, comments:0, shares:0, engagement:0 };
+  let earliestSince = null, latestUntil = null;
 
   for (const brand of brands) {
     const items = g[brand];
     const bt = { content:0, followers:0, views:0, likes:0, comments:0, shares:0, engagement:0 };
     for (const { s, totals } of items) {
       const t = totals || {};
-      const status = lastSnapshot[s.id]
-        ? `<span class="status ok" title="${escapeHtml(t._note || '')}">${escapeHtml(fmtWhen(lastSnapshot[s.id].captured_at))}${t._note ? ' · *' : ''}</span>`
+      const snap = lastSnapshot[s.id];
+      const status = snap
+        ? `<span class="status ok" title="${escapeHtml(t._note || '')}">${escapeHtml(fmtWhen(snap.captured_at))}${t._note ? ' · *' : ''}</span>`
         : `<span class="status">—</span>`;
+      const sinceCell = t.since
+        ? `<span title="${escapeHtml(fullDate(t.since))}">${escapeHtml(monthYear(t.since))}</span>`
+        : '<span class="status">—</span>';
       rows.push(`<tr data-id="${s.id}">
         <td><b>${escapeHtml(brand)}</b></td>
         <td><span class="pbadge ${s.platform}">${PBADGE[s.platform]}</span> ${escapeHtml(s.label || s.source_id)}</td>
-        <td class="num">${fmt(t.content)}</td>
-        <td class="num">${fmt(t.followers)}</td>
-        <td class="num">${fmt(t.views)}</td>
-        <td class="num">${fmt(t.likes)}</td>
-        <td class="num">${fmt(t.comments)}</td>
-        <td class="num">${fmt(t.shares)}</td>
-        <td class="num">${fmt(t.engagement)}</td>
+        <td>${sinceCell}</td>
+        <td class="num">${fmtCell(t.content)}</td>
+        <td class="num">${fmtCell(t.followers)}</td>
+        <td class="num">${fmtCell(t.views)}</td>
+        <td class="num">${fmtCell(t.likes)}</td>
+        <td class="num">${fmtCell(t.comments)}</td>
+        <td class="num">${fmtCell(t.shares)}</td>
+        <td class="num">${fmtCell(t.engagement)}</td>
         <td>${status}</td>
       </tr>`);
       for (const k of Object.keys(bt)) if (typeof t[k] === 'number') bt[k] += t[k];
+      if (t.since && (!earliestSince || t.since < earliestSince)) earliestSince = t.since;
+      if (t.until && (!latestUntil   || t.until > latestUntil))   latestUntil   = t.until;
     }
     rows.push(`<tr class="brand-total">
-      <td colspan="2">${escapeHtml(brand)} — total</td>
-      <td class="num">${fmt(bt.content)}</td>
-      <td class="num">${fmt(bt.followers)}</td>
-      <td class="num">${fmt(bt.views)}</td>
-      <td class="num">${fmt(bt.likes)}</td>
-      <td class="num">${fmt(bt.comments)}</td>
-      <td class="num">${fmt(bt.shares)}</td>
-      <td class="num">${fmt(bt.engagement)}</td>
+      <td colspan="3">${escapeHtml(brand)} — total</td>
+      <td class="num">${fmtCell(bt.content)}</td>
+      <td class="num">${fmtCell(bt.followers)}</td>
+      <td class="num">${fmtCell(bt.views)}</td>
+      <td class="num">${fmtCell(bt.likes)}</td>
+      <td class="num">${fmtCell(bt.comments)}</td>
+      <td class="num">${fmtCell(bt.shares)}</td>
+      <td class="num">${fmtCell(bt.engagement)}</td>
       <td></td>
     </tr>`);
     for (const k of Object.keys(grand)) grand[k] += bt[k];
   }
   rows.push(`<tr class="grand-total">
-    <td colspan="2">Grand total</td>
-    <td class="num">${fmt(grand.content)}</td>
-    <td class="num">${fmt(grand.followers)}</td>
-    <td class="num">${fmt(grand.views)}</td>
-    <td class="num">${fmt(grand.likes)}</td>
-    <td class="num">${fmt(grand.comments)}</td>
-    <td class="num">${fmt(grand.shares)}</td>
-    <td class="num">${fmt(grand.engagement)}</td>
+    <td colspan="3">Grand total${filterState.platform || filterState.brand ? ' (filtered)' : ''}</td>
+    <td class="num">${fmtCell(grand.content)}</td>
+    <td class="num">${fmtCell(grand.followers)}</td>
+    <td class="num">${fmtCell(grand.views)}</td>
+    <td class="num">${fmtCell(grand.likes)}</td>
+    <td class="num">${fmtCell(grand.comments)}</td>
+    <td class="num">${fmtCell(grand.shares)}</td>
+    <td class="num">${fmtCell(grand.engagement)}</td>
     <td></td>
   </tr>`);
   body.innerHTML = rows.join('');
   updateTiles(grand);
+  updateTimeframe(earliestSince, latestUntil);
   const latest = Object.values(lastSnapshot).reduce((m, r) => r.captured_at > m ? r.captured_at : m, '');
   $('lastCollected').textContent = latest ? 'Last collected ' + fmtWhen(latest) : 'Never collected — click "Collect snapshot".';
 }
 
 function updateTiles(grand) {
   if (!grand) grand = { content:0, followers:0, views:0, comments:0, engagement:0 };
-  $('tContent').textContent    = fmt(grand.content);
-  $('tFollowers').textContent  = fmt(grand.followers);
-  $('tViews').textContent      = fmt(grand.views);
-  $('tComments').textContent   = fmt(grand.comments);
-  $('tEngagement').textContent = fmt(grand.engagement);
+  const set = (id, xid, v) => {
+    $(id).textContent = fmtCompact(v);
+    $(xid).textContent = (v == null || isNaN(v) || Number(v) < 1000) ? '' : Number(v).toLocaleString();
+  };
+  set('tContent',    'tContentX',    grand.content);
+  set('tFollowers',  'tFollowersX',  grand.followers);
+  set('tViews',      'tViewsX',      grand.views);
+  set('tComments',   'tCommentsX',   grand.comments);
+  set('tEngagement', 'tEngagementX', grand.engagement);
+}
+
+function updateTimeframe(since, until) {
+  const wrap = $('timeframe');
+  if (!since && !until) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'flex';
+  $('tfFrom').textContent = since ? monthYear(since) : '—';
+  $('tfFrom').title = since ? fullDate(since) : '';
+  $('tfTo').textContent = until ? monthYear(until) : 'now';
+  $('tfTo').title = until ? fullDate(until) : '';
+  const scope = filterState.platform || filterState.brand
+    ? `${filterState.brand || 'all brands'}${filterState.platform ? ' · ' + filterState.platform : ''}`
+    : 'every source in the view';
+  $('tfNote').textContent = `earliest data across ${scope}`;
 }
 
 function setBreakdownStatus(sourceId, kind, extra) {
@@ -892,27 +1055,38 @@ function slug(s) {
 
 function buildTotalsRows() {
   const g = grouped();
-  const cols = ['brand','platform','source','content','followers','views','likes_reactions','comments','shares','engagement','collected_at','note'];
+  // Column order picked so the PDF's compact-under-exact stacking still lines up.
+  const cols = ['brand','platform','source',
+    'content','followers','views','likes_reactions','comments','shares','engagement',
+    'data_since','data_until','collected_at','note'];
   const rows = [cols];
   const grand = { content:0, followers:0, views:0, likes:0, comments:0, shares:0, engagement:0 };
+  let grandSince = null, grandUntil = null;
   const brands = Object.keys(g).sort();
   for (const brand of brands) {
     const bt = { content:0, followers:0, views:0, likes:0, comments:0, shares:0, engagement:0 };
+    let btSince = null, btUntil = null;
     for (const { s } of g[brand]) {
       const snap = lastSnapshot[s.id];
       const t = snap?.totals || {};
       rows.push([brand, s.platform, s.label || s.source_id,
         t.content ?? '', t.followers ?? '', t.views ?? '',
-        t.likes ?? '', t.comments ?? '', t.shares ?? '',
-        t.engagement ?? '', snap?.captured_at || '', t._note || '']);
+        t.likes ?? '', t.comments ?? '', t.shares ?? '', t.engagement ?? '',
+        t.since || '', t.until || '', snap?.captured_at || '', t._note || '']);
       for (const k of Object.keys(bt)) if (typeof t[k] === 'number') bt[k] += t[k];
+      if (t.since && (!btSince || t.since < btSince)) btSince = t.since;
+      if (t.until && (!btUntil || t.until > btUntil)) btUntil = t.until;
     }
     rows.push([brand + ' — total', '', '',
-      bt.content, bt.followers, bt.views, bt.likes, bt.comments, bt.shares, bt.engagement, '', '']);
+      bt.content, bt.followers, bt.views, bt.likes, bt.comments, bt.shares, bt.engagement,
+      btSince || '', btUntil || '', '', '']);
     for (const k of Object.keys(grand)) grand[k] += bt[k];
+    if (btSince && (!grandSince || btSince < grandSince)) grandSince = btSince;
+    if (btUntil && (!grandUntil || btUntil > grandUntil)) grandUntil = btUntil;
   }
   rows.push(['GRAND TOTAL', '', '',
-    grand.content, grand.followers, grand.views, grand.likes, grand.comments, grand.shares, grand.engagement, '', '']);
+    grand.content, grand.followers, grand.views, grand.likes, grand.comments, grand.shares, grand.engagement,
+    grandSince || '', grandUntil || '', '', '']);
   return rows;
 }
 
@@ -945,6 +1119,73 @@ $('exportBtn').addEventListener('click', async () => {
     const brand = sources[0]?.brand || 'analytics';
     XLSX.writeFile(wb, `${slug(brand)}-analytics-${new Date().toISOString().slice(0,10)}.xlsx`);
   } catch (e) { showAlert('collectAlert', 'Export failed: ' + (e.message || e)); }
+});
+
+$('filterPlatform').addEventListener('change', e => { filterState.platform = e.target.value; renderBreakdown(); });
+$('filterBrand').addEventListener('change',    e => { filterState.brand    = e.target.value; renderBreakdown(); });
+$('filterReset').addEventListener('click', () => {
+  filterState.platform = ''; filterState.brand = '';
+  $('filterPlatform').value = ''; $('filterBrand').value = '';
+  renderBreakdown();
+});
+
+$('exportPdfBtn').addEventListener('click', () => {
+  try {
+    const { jsPDF } = window.jspdf || {};
+    if (!jsPDF) throw new Error('PDF library did not load.');
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+    const brand = filterState.brand || (sources[0]?.brand) || 'Analytics';
+    const title = filterState.platform || filterState.brand
+      ? `Brand analytics (${[filterState.brand, filterState.platform].filter(Boolean).join(' · ')})`
+      : 'Brand analytics — all brands';
+
+    doc.setFontSize(16); doc.setFont('helvetica', 'bold');
+    doc.text(title, 40, 40);
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(90);
+    const latest = Object.values(lastSnapshot).reduce((m, r) => r.captured_at > m ? r.captured_at : m, '');
+    const meta = [];
+    meta.push('Generated ' + new Date().toLocaleString());
+    if (latest) meta.push('Last snapshot ' + new Date(latest).toLocaleString());
+    doc.text(meta.join('   ·   '), 40, 58);
+    doc.setTextColor(0);
+
+    const totalsRows = buildTotalsRows();          // header row + data rows
+    const head = [totalsRows[0]];
+    const body = totalsRows.slice(1).map(r => r.map((v, i) => {
+      // Compact + exact in the numeric columns (indexes 3..9 in the totals-rows layout)
+      if (i >= 3 && i <= 9 && typeof v === 'number') return fmtCompact(v) + '\n' + Number(v).toLocaleString();
+      return v ?? '';
+    }));
+    doc.autoTable({
+      head, body, startY: 78,
+      styles: { fontSize: 8, cellPadding: 4, lineColor: [220, 224, 230], lineWidth: 0.5 },
+      headStyles: { fillColor: [46, 125, 79], textColor: 255, fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [250, 251, 252] },
+      didParseCell: (data) => {
+        const kind = data.row.raw && data.row.raw[0];
+        if (typeof kind === 'string' && /— total$/.test(kind)) {
+          data.cell.styles.fillColor = [238, 248, 241];
+          data.cell.styles.fontStyle = 'bold';
+        }
+        if (typeof kind === 'string' && kind === 'GRAND TOTAL') {
+          data.cell.styles.fillColor = [46, 125, 79];
+          data.cell.styles.textColor = 255;
+          data.cell.styles.fontStyle = 'bold';
+        }
+      }
+    });
+
+    // Small design credit at the bottom of the last page (attribution, not chrome).
+    const pageCount = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8); doc.setTextColor(150);
+      doc.text('Designed by Pritam Sonone · digitalpritam.in', 40, doc.internal.pageSize.getHeight() - 20);
+      doc.text(`Page ${i} of ${pageCount}`, doc.internal.pageSize.getWidth() - 80, doc.internal.pageSize.getHeight() - 20);
+    }
+
+    doc.save(`${slug(brand)}-analytics-${new Date().toISOString().slice(0,10)}.pdf`);
+  } catch (e) { showAlert('collectAlert', 'PDF export failed: ' + (e.message || e)); }
 });
 
 $('exportCsvBtn').addEventListener('click', () => {
@@ -984,6 +1225,20 @@ async function onSignedIn() {
   const { data } = await sb.auth.getSession();
   if (data?.session) { session = data.session; updateAuthUI(); await onSignedIn(); }
 })();
+
+/* Design credits — a signature, not a lock. Discoverable via DevTools console. */
+window.__DESIGN_CREDITS__ = Object.freeze({
+  designer: 'Pritam Sonone',
+  portfolio: 'https://www.digitalpritam.in',
+  email: 'contact@digitalpritam.in',
+  project: 'Brand Analytics Dashboard'
+});
+if (typeof console !== 'undefined') {
+  const s1 = 'color:#2E7D4F;font-weight:700;font-size:13px;';
+  const s2 = 'color:#6B7280;font-size:11px;';
+  console.log('%cDesigned by Pritam Sonone', s1);
+  console.log('%chttps://www.digitalpritam.in · contact@digitalpritam.in', s2);
+}
 </script>
 </body>
 </html>
