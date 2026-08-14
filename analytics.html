@@ -149,6 +149,57 @@
   .filter-group select{padding:8px 12px;font-size:13px;min-width:160px;}
   .compact{font-variant-numeric:tabular-nums;}
   .compact .sub{font-size:11px;color:var(--text-mut);display:block;font-family:var(--mono);}
+  /* --- breakdown redesign --- */
+  .bd-toolbar{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin:-4px 0 12px;}
+  .bd-toolbar h2{margin:0;font-size:17px;}
+  .bd-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .preset-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:8px 0 4px;border-top:1px solid var(--border);margin-top:2px;}
+  .preset-row .lbl{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-mut);font-weight:600;margin-right:4px;}
+  .chip{
+    display:inline-flex;align-items:center;gap:6px;padding:6px 12px;font-size:12px;font-weight:500;
+    background:var(--field);color:var(--text-sec);border:1px solid var(--border-strong);
+    border-radius:99px;cursor:pointer;transition:all var(--dur) var(--ease);user-select:none;
+  }
+  .chip:hover{color:var(--text);border-color:var(--accent);}
+  .chip.on{background:var(--accent-light);color:var(--accent);border-color:var(--accent);font-weight:600;}
+  .chip .n{font-family:var(--mono);font-size:10.5px;opacity:.7;}
+  .chip.preset{border-style:dashed;background:transparent;}
+  .chip.preset:hover{border-style:solid;background:var(--hover);}
+  /* Breakdown table styling — cleaner spacing, stronger brand grouping */
+  #breakdownTable{border-collapse:separate;border-spacing:0;}
+  #breakdownTable th{position:sticky;top:0;background:var(--card);backdrop-filter:blur(8px);z-index:1;font-weight:600;color:var(--text-mut);padding:11px 12px;font-size:10.5px;}
+  #breakdownTable td{padding:12px;font-size:13.5px;border-bottom:1px solid var(--border);vertical-align:middle;}
+  #breakdownTable td.num{font-variant-numeric:tabular-nums;font-weight:500;color:var(--text);}
+  #breakdownTable td.num .muted{color:var(--text-mut);font-weight:400;}
+  #breakdownTable tr.brand-head td{
+    background:linear-gradient(90deg,var(--accent-light),transparent 70%);
+    color:var(--text);font-weight:700;font-size:12.5px;padding:14px 12px 8px;
+    text-transform:uppercase;letter-spacing:.04em;border-bottom:none;
+  }
+  #breakdownTable tr.brand-head td .count{color:var(--text-mut);font-weight:500;letter-spacing:0;text-transform:none;font-size:11.5px;margin-left:8px;}
+  #breakdownTable tr.source-row td:first-child{border-left:3px solid transparent;padding-left:16px;}
+  #breakdownTable tr.source-row.yt td:first-child{border-left-color:var(--danger);}
+  #breakdownTable tr.source-row.fb td:first-child{border-left-color:#3b82f6;}
+  #breakdownTable tr.source-row.ig td:first-child{border-left-color:#e0559a;}
+  #breakdownTable tr.source-row:hover td{background:var(--hover);}
+  #breakdownTable tr.brand-total td{
+    background:var(--accent-light);color:var(--text);font-weight:700;font-size:13.5px;
+    border-top:1px solid rgba(46,125,79,.2);border-bottom:1px solid rgba(46,125,79,.2);
+  }
+  #breakdownTable tr.brand-total td:first-child{padding-left:16px;color:var(--accent);}
+  #breakdownTable tr.grand-total td{
+    background:linear-gradient(180deg,var(--accent),var(--accent-hover));color:var(--accent-fg);
+    font-weight:800;font-size:14px;border:none;
+  }
+  #breakdownTable tr.grand-total td:first-child{border-radius:var(--r-sm) 0 0 var(--r-sm);}
+  #breakdownTable tr.grand-total td:last-child{border-radius:0 var(--r-sm) var(--r-sm) 0;}
+  #breakdownTable tr.spacer td{padding:6px 0;border:none;background:transparent;}
+  .src-line{display:flex;align-items:center;gap:8px;}
+  .src-line .lbl{color:var(--text);}
+  .src-since{font-size:11px;color:var(--text-mut);margin-top:2px;font-family:var(--mono);}
+  .status.dot-ok::before,.status.dot-err::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:6px;vertical-align:middle;}
+  .status.dot-ok::before{background:var(--accent);}
+  .status.dot-err::before{background:var(--danger);}
   .pbadge{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.03em;padding:2px 7px;border-radius:6px;margin-right:6px;vertical-align:middle;}
   .pbadge.youtube{background:rgba(192,64,47,.15);color:var(--danger);}
   .pbadge.facebook{background:rgba(37,99,235,.15);color:#3b82f6;}
@@ -249,45 +300,40 @@
     </div>
 
     <div class="card">
-      <div class="filters">
-        <h2 style="margin:0;flex:1;">Per-source breakdown</h2>
-        <div class="filter-group">
-          <label for="filterPlatform">Platform</label>
-          <select id="filterPlatform">
-            <option value="">All platforms</option>
-            <option value="youtube">YouTube</option>
-            <option value="facebook">Facebook</option>
-            <option value="instagram">Instagram</option>
-          </select>
+      <div class="bd-toolbar">
+        <h2>Per-source breakdown</h2>
+        <div class="bd-controls">
+          <div class="filter-group" style="flex-direction:row;align-items:center;gap:8px;">
+            <select id="filterPlatform" title="Platform">
+              <option value="">All platforms</option>
+              <option value="youtube">YouTube</option>
+              <option value="facebook">Facebook</option>
+              <option value="instagram">Instagram</option>
+            </select>
+            <select id="filterBrand" title="Brand"><option value="">All brands</option></select>
+            <button id="filterReset" class="ghost tiny" title="Clear filters">Reset</button>
+          </div>
         </div>
-        <div class="filter-group">
-          <label for="filterBrand">Brand / channel</label>
-          <select id="filterBrand"><option value="">All brands</option></select>
-        </div>
-        <button id="filterReset" class="ghost tiny" title="Clear filters">Reset</button>
+      </div>
+      <!-- Column toggle chips. Each chip enables/disables a metric column. -->
+      <div class="preset-row" id="colChips" aria-label="Which columns to show">
+        <span class="lbl">Show</span>
+        <!-- chips injected by JS -->
+        <span style="flex:1"></span>
+        <span class="lbl">Presets</span>
+        <span class="chip preset" data-preset="reach"      title="Content, Followers, Views">Reach</span>
+        <span class="chip preset" data-preset="engagement" title="Likes, Comments, Shares, Engagement">Engagement</span>
+        <span class="chip preset" data-preset="all"        title="Show every column">Everything</span>
       </div>
       <div style="overflow-x:auto;">
         <table id="breakdownTable">
-          <thead>
-            <tr>
-              <th>Brand</th>
-              <th>Source</th>
-              <th>Data since</th>
-              <th class="num">Content</th>
-              <th class="num">Followers</th>
-              <th class="num">Views</th>
-              <th class="num">Likes / Reactions</th>
-              <th class="num">Comments</th>
-              <th class="num">Shares</th>
-              <th class="num">Engagement</th>
-              <th>Status</th>
-            </tr>
-          </thead>
+          <thead><tr id="breakdownHead"></tr></thead>
           <tbody id="breakdownBody">
-            <tr><td colspan="11" class="empty" id="emptyRow">No sources yet — configure them below.</td></tr>
+            <tr><td class="empty" id="emptyRow">No sources yet — configure them below.</td></tr>
           </tbody>
         </table>
       </div>
+      <p class="hint">Compact numbers by default — hover any cell for the exact figure. Toggle columns above to focus on what matters; your choice is remembered per browser. Exports always include every column.</p>
     </div>
 
     <div class="card">
@@ -383,12 +429,6 @@ function fmtCompact(n) {
     }
   }
   return String(x);
-}
-/* Cell that shows compact BIG + exact underneath, so the tile reads at a glance
-   and the exact number stays available. Suppressed when the value is unknown. */
-function fmtCell(n) {
-  if (n == null || isNaN(n)) return '<span>—</span>';
-  return `<span class="compact">${fmtCompact(n)}<span class="sub">${Number(n).toLocaleString()}</span></span>`;
 }
 const escapeHtml = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -941,79 +981,177 @@ function refreshBrandFilter() {
   if (prev && !brands.includes(prev)) { filterState.brand = ''; sel.value = ''; }
 }
 
+/* ---------- breakdown redesign: dynamic columns + cleaner cells ----------
+   Every column is described in one place. Adding a new metric later means one
+   entry here, not surgery across the render function, the CSV, and the PDF. */
+const METRIC_DEFS = [
+  { key: 'since',      label: 'Since',       kind: 'date',    default: true,  aggregate: false },
+  { key: 'content',    label: 'Content',     kind: 'num',     default: true,  aggregate: true  },
+  { key: 'followers',  label: 'Followers',   kind: 'num',     default: true,  aggregate: true  },
+  { key: 'views',      label: 'Views',       kind: 'num',     default: true,  aggregate: true  },
+  { key: 'likes',      label: 'Likes',       kind: 'num',     default: true,  aggregate: true  },
+  { key: 'comments',   label: 'Comments',    kind: 'num',     default: true,  aggregate: true  },
+  { key: 'shares',     label: 'Shares',      kind: 'num',     default: false, aggregate: true  },
+  { key: 'engagement', label: 'Engagement',  kind: 'num',     default: true,  aggregate: true  },
+  { key: 'status',     label: 'Updated',     kind: 'status',  default: true,  aggregate: false },
+];
+const PRESETS = {
+  reach:      new Set(['since','content','followers','views','status']),
+  engagement: new Set(['content','likes','comments','shares','engagement','status']),
+  all:        new Set(METRIC_DEFS.map(m => m.key)),
+};
+
+let visibleCols;
+function loadCols() {
+  try {
+    const s = JSON.parse(localStorage.getItem('analytics.cols') || 'null');
+    if (Array.isArray(s) && s.length) return new Set(s);
+  } catch {}
+  return new Set(METRIC_DEFS.filter(m => m.default).map(m => m.key));
+}
+function saveCols() {
+  try { localStorage.setItem('analytics.cols', JSON.stringify([...visibleCols])); } catch {}
+}
+function visibleDefs() { return METRIC_DEFS.filter(m => visibleCols.has(m.key)); }
+visibleCols = loadCols();
+
+/* Cell for a metric — compact number is the visible value, exact is one hover
+   away (`title`). Cuts the visual noise in half without hiding any data. */
+function numHtml(n) {
+  if (n == null || isNaN(n)) return '<span class="muted">—</span>';
+  return `<span title="${Number(n).toLocaleString()}">${fmtCompact(n)}</span>`;
+}
+function dateHtml(iso) {
+  if (!iso) return '<span class="muted">—</span>';
+  return `<span title="${escapeHtml(fullDate(iso))}">${escapeHtml(monthYear(iso))}</span>`;
+}
+function statusHtml(snap, note, sourceId) {
+  const err = sourceId ? collectErrors[sourceId] : null;
+  if (err) return `<span class="status dot-err" title="${escapeHtml(err)}">error</span>`;
+  if (!snap) return '<span class="status muted">—</span>';
+  const suffix = note ? ' · *' : '';
+  return `<span class="status dot-ok" title="${escapeHtml(note || '')}">${escapeHtml(fmtWhen(snap.captured_at))}${suffix}</span>`;
+}
+
+/* Render the toggle-chip row so it stays in sync with visibleCols. */
+function renderColChips() {
+  const row = $('colChips');
+  const before = row.querySelector('.lbl');
+  // Clear the injected chips (keep the two lbl spans + spacer + preset chips).
+  row.querySelectorAll('.chip.metric').forEach(el => el.remove());
+  const spacer = row.querySelector('span[style*="flex:1"]');
+  const frag = document.createDocumentFragment();
+  for (const m of METRIC_DEFS) {
+    const chip = document.createElement('span');
+    chip.className = 'chip metric' + (visibleCols.has(m.key) ? ' on' : '');
+    chip.dataset.key = m.key;
+    chip.setAttribute('role', 'button');
+    chip.setAttribute('tabindex', '0');
+    chip.textContent = m.label;
+    frag.appendChild(chip);
+  }
+  row.insertBefore(frag, spacer);
+  // Highlight the preset chip if the current selection matches one.
+  row.querySelectorAll('.chip.preset').forEach(el => {
+    const p = PRESETS[el.dataset.preset];
+    const same = p && p.size === visibleCols.size && [...p].every(k => visibleCols.has(k));
+    el.classList.toggle('on', !!same);
+  });
+}
+
+$('colChips').addEventListener('click', (ev) => {
+  const chip = ev.target.closest('.chip');
+  if (!chip) return;
+  if (chip.classList.contains('preset')) {
+    const p = PRESETS[chip.dataset.preset];
+    if (p) { visibleCols = new Set(p); saveCols(); renderColChips(); renderBreakdown(); }
+    return;
+  }
+  if (chip.classList.contains('metric')) {
+    const k = chip.dataset.key;
+    // Refuse to hide the very last column — keeps the table usable.
+    if (visibleCols.has(k) && visibleCols.size === 1) return;
+    if (visibleCols.has(k)) visibleCols.delete(k); else visibleCols.add(k);
+    saveCols();
+    renderColChips();
+    renderBreakdown();
+  }
+});
+
 function renderBreakdown() {
   refreshBrandFilter();
+  renderColChips();
+  const head = $('breakdownHead');
   const body = $('breakdownBody');
+  const cols = visibleDefs();
+  const colspan = 2 + cols.length;   // Brand + Source + N metric cols
+
+  // Header: Brand, Source, then whatever the user chose.
+  head.innerHTML = `<th style="min-width:130px;">Brand</th><th style="min-width:200px;">Source</th>` +
+    cols.map(m => `<th class="${m.kind === 'num' ? 'num' : ''}">${escapeHtml(m.label)}</th>`).join('');
+
   const visible = filteredSources();
   if (!sources.length) {
-    body.innerHTML = `<tr><td colspan="11" class="empty">No sources yet — add one below.</td></tr>`;
-    updateTiles(); updateTimeframe(null, null);
-    return;
+    body.innerHTML = `<tr><td colspan="${colspan}" class="empty">No sources yet — add one below.</td></tr>`;
+    updateTiles(); updateTimeframe(null, null); return;
   }
   if (!visible.length) {
-    body.innerHTML = `<tr><td colspan="11" class="empty">No sources match the current filter.</td></tr>`;
-    updateTiles(); updateTimeframe(null, null);
-    return;
+    body.innerHTML = `<tr><td colspan="${colspan}" class="empty">No sources match the current filter.</td></tr>`;
+    updateTiles(); updateTimeframe(null, null); return;
   }
+
+  // Render one cell for a source per visible column def.
+  const cellFor = (m, t, snap, sourceId) => {
+    if (m.kind === 'num')    return `<td class="num">${numHtml(t[m.key])}</td>`;
+    if (m.kind === 'date')   return `<td>${dateHtml(t.since)}</td>`;
+    if (m.kind === 'status') return `<td>${statusHtml(snap, t._note, sourceId)}</td>`;
+    return '<td></td>';
+  };
+
   const g = grouped();
   const brands = Object.keys(g).sort();
-  const rows = [];
   const grand = { content:0, followers:0, views:0, likes:0, comments:0, shares:0, engagement:0 };
   let earliestSince = null, latestUntil = null;
+  const rows = [];
 
   for (const brand of brands) {
     const items = g[brand];
     const bt = { content:0, followers:0, views:0, likes:0, comments:0, shares:0, engagement:0 };
+
+    // Brand section header — a strong visual anchor without repeating the brand
+    // name on every source row underneath.
+    rows.push(`<tr class="brand-head"><td colspan="${colspan}">${escapeHtml(brand)}<span class="count">${items.length} source${items.length === 1 ? '' : 's'}</span></td></tr>`);
+
     for (const { s, totals } of items) {
       const t = totals || {};
       const snap = lastSnapshot[s.id];
-      const status = snap
-        ? `<span class="status ok" title="${escapeHtml(t._note || '')}">${escapeHtml(fmtWhen(snap.captured_at))}${t._note ? ' · *' : ''}</span>`
-        : `<span class="status">—</span>`;
-      const sinceCell = t.since
-        ? `<span title="${escapeHtml(fullDate(t.since))}">${escapeHtml(monthYear(t.since))}</span>`
-        : '<span class="status">—</span>';
-      rows.push(`<tr data-id="${s.id}">
-        <td><b>${escapeHtml(brand)}</b></td>
-        <td><span class="pbadge ${s.platform}">${PBADGE[s.platform]}</span> ${escapeHtml(s.label || s.source_id)}</td>
-        <td>${sinceCell}</td>
-        <td class="num">${fmtCell(t.content)}</td>
-        <td class="num">${fmtCell(t.followers)}</td>
-        <td class="num">${fmtCell(t.views)}</td>
-        <td class="num">${fmtCell(t.likes)}</td>
-        <td class="num">${fmtCell(t.comments)}</td>
-        <td class="num">${fmtCell(t.shares)}</td>
-        <td class="num">${fmtCell(t.engagement)}</td>
-        <td>${status}</td>
+      const pcode = s.platform === 'youtube' ? 'yt' : s.platform === 'facebook' ? 'fb' : 'ig';
+      rows.push(`<tr class="source-row ${pcode}" data-id="${s.id}">
+        <td></td>
+        <td><div class="src-line"><span class="pbadge ${s.platform}">${PBADGE[s.platform]}</span><span class="lbl">${escapeHtml(s.label || s.source_id)}</span></div></td>
+        ${cols.map(m => cellFor(m, t, snap, s.id)).join('')}
       </tr>`);
       for (const k of Object.keys(bt)) if (typeof t[k] === 'number') bt[k] += t[k];
       if (t.since && (!earliestSince || t.since < earliestSince)) earliestSince = t.since;
       if (t.until && (!latestUntil   || t.until > latestUntil))   latestUntil   = t.until;
     }
+
+    // Brand subtotal — always fills every visible column so the alignment
+    // reads correctly no matter which columns you have on.
     rows.push(`<tr class="brand-total">
-      <td colspan="3">${escapeHtml(brand)} — total</td>
-      <td class="num">${fmtCell(bt.content)}</td>
-      <td class="num">${fmtCell(bt.followers)}</td>
-      <td class="num">${fmtCell(bt.views)}</td>
-      <td class="num">${fmtCell(bt.likes)}</td>
-      <td class="num">${fmtCell(bt.comments)}</td>
-      <td class="num">${fmtCell(bt.shares)}</td>
-      <td class="num">${fmtCell(bt.engagement)}</td>
-      <td></td>
+      <td colspan="2">${escapeHtml(brand)} total</td>
+      ${cols.map(m => m.kind === 'num' ? `<td class="num">${numHtml(bt[m.key])}</td>` : '<td></td>').join('')}
     </tr>`);
+    rows.push(`<tr class="spacer"><td colspan="${colspan}"></td></tr>`);
     for (const k of Object.keys(grand)) grand[k] += bt[k];
   }
+
+  const gtLabel = 'Grand total' + (filterState.platform || filterState.brand ? ' (filtered)' : '');
   rows.push(`<tr class="grand-total">
-    <td colspan="3">Grand total${filterState.platform || filterState.brand ? ' (filtered)' : ''}</td>
-    <td class="num">${fmtCell(grand.content)}</td>
-    <td class="num">${fmtCell(grand.followers)}</td>
-    <td class="num">${fmtCell(grand.views)}</td>
-    <td class="num">${fmtCell(grand.likes)}</td>
-    <td class="num">${fmtCell(grand.comments)}</td>
-    <td class="num">${fmtCell(grand.shares)}</td>
-    <td class="num">${fmtCell(grand.engagement)}</td>
-    <td></td>
+    <td colspan="2">${escapeHtml(gtLabel)}</td>
+    ${cols.map(m => m.kind === 'num' ? `<td class="num">${numHtml(grand[m.key])}</td>` : '<td></td>').join('')}
   </tr>`);
+
   body.innerHTML = rows.join('');
   updateTiles(grand);
   updateTimeframe(earliestSince, latestUntil);
@@ -1048,12 +1186,17 @@ function updateTimeframe(since, until) {
   $('tfNote').textContent = `earliest data across ${scope}`;
 }
 
+/* Errors from the last collect run, keyed by source_id. renderBreakdown reads
+   this so a failed collect visibly shows "error · <reason on hover>" in the
+   Updated column instead of a silent "—". Cleared as soon as the source
+   snapshots successfully. */
+const collectErrors = {};
 function setBreakdownStatus(sourceId, kind, extra) {
-  const row = document.querySelector(`tr[data-id="${sourceId}"] td:last-child`);
-  if (!row) return;
-  if (kind === 'ok')   row.innerHTML = `<span class="status ok">just now${extra ? ' · *' : ''}</span>`;
-  else if (kind === 'err') row.innerHTML = `<span class="status err" title="${escapeHtml(extra || '')}">error</span>`;
-  else row.innerHTML = `<span class="status">${escapeHtml(kind)}</span>`;
+  if (kind === 'ok')  delete collectErrors[sourceId];
+  else if (kind === 'err') collectErrors[sourceId] = extra || 'error';
+  // Re-render so the status column reflects the change immediately. Cheap —
+  // the whole breakdown is a template render, not a diff.
+  renderBreakdown();
 }
 
 /* ---------- export ---------- */
