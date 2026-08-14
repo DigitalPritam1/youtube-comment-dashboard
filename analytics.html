@@ -297,7 +297,7 @@
       </div>
       <p class="hint" style="margin-top:0;margin-bottom:14px;">
         A "source" is one social account. Each one is tagged with a brand so we can total per-brand.
-        Facebook and Instagram sources are auto-discovered from Pages assigned to <code>dashboard-bot</code> — pick from the dropdown. YouTube uses a channel handle like <code>@IndianFarmerOfficial</code>.
+        Facebook and Instagram sources are auto-discovered from Pages assigned to <code>dashboard-bot</code> — pick from the dropdown. YouTube uses a channel handle like <code>@IndianFarmer</code>.
       </p>
 
       <div id="sourceList"></div>
@@ -344,9 +344,9 @@ const PBADGE = { youtube: 'YT', facebook: 'FB', instagram: 'IG' };
 /* Preloaded brand defaults for first-run seed. YT handles known; FB/IG Pages are
    auto-picked from the Pages the shared System User can see. */
 const BRAND_DEFAULTS = [
-  { brand: 'Indian Farmer',         platform: 'youtube',   handle: '@IndianFarmerOfficial' },
+  { brand: 'Indian Farmer',         platform: 'youtube',   handle: '@IndianFarmer' },
   { brand: 'Indian Farmer Courses', platform: 'youtube',   handle: '@indianfarmer.courses' },
-  { brand: 'Santosh Jadhav',        platform: 'youtube',   handle: '@santoshjadhav' },
+  { brand: 'Santosh Jadhav',        platform: 'youtube',   handle: '@SantoshJadhav' },
 ];
 /* Brand -> preferred FB Page name (case-insensitive substring match). If the
    shared token can't see the Page, we skip it silently. */
@@ -539,22 +539,32 @@ async function loadMetaPagesOnce() {
   return metaPagesCache;
 }
 
-async function seedDefaultsIfEmpty() {
-  if (sources.length) return;
+/* Adds any default brand+platform combo the user is currently missing. Runs
+   on first open AND on every subsequent open, so a deleted row (e.g. one that
+   pointed at the wrong channel) auto-reappears with the corrected handle from
+   BRAND_DEFAULTS. Existing rows are left alone. */
+async function seedMissingDefaults() {
   const userId = session.user.id;
+  const have = new Set(sources.map(s => s.brand + '|' + s.platform));
   const toInsert = [];
 
   // 1) YouTube — resolve each preloaded handle to a channel id.
   for (const d of BRAND_DEFAULTS) {
     if (d.platform !== 'youtube') continue;
+    if (have.has(d.brand + '|youtube')) continue;
     try {
       const handle = d.handle.startsWith('@') ? d.handle.slice(1) : d.handle;
       const r = await ytFetch('channels', { part: 'id,snippet', forHandle: handle });
       const ch = (r.items || [])[0];
-      if (ch) toInsert.push({
-        user_id: userId, brand: d.brand, platform: 'youtube',
-        source_id: ch.id, label: '@' + (ch.snippet?.customUrl || handle)
-      });
+      if (ch) {
+        // customUrl can come back with or without a leading '@' depending on the
+        // channel — always strip then re-add, so it's exactly one '@'.
+        const raw = String(ch.snippet?.customUrl || handle).replace(/^@+/, '');
+        toInsert.push({
+          user_id: userId, brand: d.brand, platform: 'youtube',
+          source_id: ch.id, label: '@' + raw
+        });
+      }
     } catch { /* leave for the user to add manually */ }
   }
 
@@ -563,14 +573,18 @@ async function seedDefaultsIfEmpty() {
   for (const hint of BRAND_META_HINTS) {
     const page = pages.find(p => hint.match.test(p.page_name || ''));
     if (!page) continue;
-    toInsert.push({
-      user_id: userId, brand: hint.brand, platform: 'facebook',
-      source_id: page.page_id, label: page.page_name
-    });
-    if (page.ig_user_id) toInsert.push({
-      user_id: userId, brand: hint.brand, platform: 'instagram',
-      source_id: page.ig_user_id, label: '@' + (page.ig_username || page.page_name)
-    });
+    if (!have.has(hint.brand + '|facebook')) {
+      toInsert.push({
+        user_id: userId, brand: hint.brand, platform: 'facebook',
+        source_id: page.page_id, label: (page.page_name || '').trim()
+      });
+    }
+    if (page.ig_user_id && !have.has(hint.brand + '|instagram')) {
+      toInsert.push({
+        user_id: userId, brand: hint.brand, platform: 'instagram',
+        source_id: page.ig_user_id, label: '@' + (page.ig_username || page.page_name)
+      });
+    }
   }
 
   if (!toInsert.length) return;
@@ -578,6 +592,8 @@ async function seedDefaultsIfEmpty() {
   if (error) throw error;
   await loadSources();
 }
+/* Back-compat alias so the older call site keeps working. */
+const seedDefaultsIfEmpty = seedMissingDefaults;
 
 function renderSourceList() {
   const el = $('sourceList');
@@ -671,7 +687,9 @@ $('addSourceBtn').addEventListener('click', async () => {
         const r = await ytFetch('channels', { part: 'id,snippet', forHandle: raw });
         const ch = (r.items || [])[0];
         if (!ch) { showAlert('addAlert', 'That YouTube handle didn\'t match a channel.'); return; }
-        source_id = ch.id; label = '@' + (ch.snippet?.customUrl || raw);
+        // Guard against '@@' — customUrl may already carry the '@'.
+        source_id = ch.id;
+        label = '@' + String(ch.snippet?.customUrl || raw).replace(/^@+/, '');
       }
     } else {
       const sel = $('addSourceSelect');
@@ -699,14 +717,7 @@ $('addSourceBtn').addEventListener('click', async () => {
 $('seedBtn').addEventListener('click', async () => {
   if (sources.length && !confirm('This adds any missing default sources (Indian Farmer, Indian Farmer Courses, Santosh Jadhav on YT/FB/IG). Existing ones aren\'t touched.')) return;
   try {
-    await seedDefaultsIfEmpty();
-    if (!sources.length) {   // seedDefaultsIfEmpty short-circuits when non-empty; force a re-seed for missing rows
-      const want = [];
-      for (const d of BRAND_DEFAULTS) if (d.platform === 'youtube') want.push({ brand: d.brand, platform: 'youtube', handle: d.handle });
-      for (const h of BRAND_META_HINTS) want.push({ brand: h.brand, platform: 'facebook', hint: h.match }, { brand: h.brand, platform: 'instagram', hint: h.match });
-      // (Re-seed logic delegated to seedDefaultsIfEmpty on empty; explicit non-empty top-ups happen via the add form.)
-    }
-    await loadSources();
+    await seedMissingDefaults();
     renderSourceList();
     renderBreakdown();
     showAlert('addAlert', 'Defaults ready.', true);
@@ -1210,7 +1221,10 @@ $('exportCsvBtn').addEventListener('click', () => {
 async function onSignedIn() {
   try {
     await loadSources();
-    if (!sources.length) await seedDefaultsIfEmpty();
+    // Top up any missing default brand+platform combos every open, so a
+    // deleted row (e.g. one that pointed at the wrong channel) auto-reappears
+    // with the corrected handle from BRAND_DEFAULTS.
+    await seedMissingDefaults();
     await loadLatestSnapshots();
     renderSourceList();
     renderBreakdown();
