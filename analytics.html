@@ -895,9 +895,12 @@ async function collectFacebook(source, onProgress) {
   // first one that succeeds. That keeps followers coming through even if
   // Meta later drops another field, and pinpoints which field is bad in the
   // meantime (captured in _fieldsWarning).
+  // `created_time` on Pages was removed in Graph v18+ (server logs confirmed:
+  // '(#100) Tried accessing nonexisting field (created_time)'). We fall back
+  // to the oldest post's date for the timeframe row anyway, so drop it from
+  // the Page-info chain entirely and stop paying a wasted round-trip on it.
   const fieldTries = [
-    'name,followers_count,fan_count,created_time',
-    'name,followers_count,created_time',
+    'name,followers_count,fan_count',
     'name,followers_count',
     'name,fan_count',
     'name',
@@ -925,13 +928,39 @@ async function collectFacebook(source, onProgress) {
 
   let content = 0, likes = 0, comments = 0, shares = 0;
   let after = '';
+  // Adaptive page size: Meta returns "(#1) Please reduce the amount of data
+  // you're asking for" on high-volume Pages (Indian Farmer's most-reacted
+  // posts have millions of reactions). When we hit that, shrink limit and
+  // retry the same page. Server logs confirmed this: the small Pages
+  // fetched fine at 100, the main Page threw #1 on the first request.
+  let pageLimit = 100;
+  let postsWarn = null;
   while (true) {
+    // Correct summary syntax is '.summary(true)' — passing 'total_count' as
+    // the argument is invalid; Meta silently returned the full reactions
+    // payload for every post, which is what triggered the (#1) error.
     const params = {
-      fields: 'created_time,reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0),shares',
-      limit: '100'
+      fields: 'created_time,reactions.limit(0).summary(true),comments.limit(0).summary(true),shares',
+      limit: String(pageLimit),
     };
     if (after) params.after = after;
-    const r = await metaFetch(source.source_id + '/posts', params, null, source.source_id);
+    let r;
+    try {
+      r = await metaFetch(source.source_id + '/posts', params, null, source.source_id);
+    } catch (e) {
+      // '(#1) Please reduce…' bubbles up as a 500 from Meta. Halve the page
+      // size and retry that same cursor; give up (with what we have) if we
+      // shrink all the way to 10 and it still fails.
+      const looksLikeVolume = /reduce the amount|#1\b/i.test(e.message || '');
+      if (looksLikeVolume && pageLimit > 10) {
+        pageLimit = Math.max(10, Math.floor(pageLimit / 2));
+        postsWarn = `high-volume Page — shrank page size to ${pageLimit}`;
+        continue;   // retry same 'after' cursor
+      }
+      // Any other error: keep what we've got, add a note, exit the loop.
+      postsWarn = `stopped at ${content} posts: ${e.message || 'unknown error'}`;
+      break;
+    }
     for (const p of (r.data || [])) {
       content++;
       likes    += p.reactions?.summary?.total_count || 0;
@@ -946,13 +975,14 @@ async function collectFacebook(source, onProgress) {
   }
   const notes = ['photo-post views not counted (see note)'];
   if (fieldsWarning) notes.unshift(fieldsWarning);
+  if (postsWarn)     notes.unshift(postsWarn);
   return {
     content, followers, views: null,
     likes, comments, shares,
     engagement: likes + comments + shares,
-    // Prefer the Page's own created_time when Graph returns it; fall back to the
-    // oldest post seen (some Pages don't expose created_time to app tokens).
-    since: info.created_time || oldestPost,
+    // Pages don't expose created_time in v21+; use the oldest post's date as
+    // an honest "data since" for the timeframe row.
+    since: oldestPost,
     until: new Date().toISOString(),
     _note: notes.join(' · ')
   };
