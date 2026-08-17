@@ -119,6 +119,33 @@
   button.tiny{padding:6px 12px;font-size:12px;font-weight:500;border-radius:10px;}
   button.danger{background:transparent;color:var(--danger);border:1px solid rgba(192,64,47,.2);box-shadow:none;}
   button.danger:hover:not(:disabled){background:rgba(192,64,47,.08);}
+  /* Split button: primary action on the left, dropdown caret on the right,
+     joined so they read as one control. Menu drops below aligned to the
+     caret's right edge. */
+  .split-btn{position:relative;display:inline-flex;align-items:stretch;}
+  .split-btn > button:first-child{border-top-right-radius:0;border-bottom-right-radius:0;}
+  .split-btn > .split-caret{
+    background:linear-gradient(180deg,var(--accent-hover),var(--accent-dark));
+    color:var(--accent-fg);border:none;padding:0 12px;font-size:12px;
+    border-top-left-radius:0;border-bottom-left-radius:0;
+    border-left:1px solid rgba(255,255,255,.18);cursor:pointer;
+    box-shadow:var(--shadow-sm), inset 0 1px 0 rgba(255,255,255,.18);
+  }
+  .split-btn > .split-caret:hover:not(:disabled){filter:brightness(1.08);}
+  .split-menu{
+    position:absolute;top:calc(100% + 6px);right:0;min-width:260px;z-index:20;
+    background:var(--bg-elev);border:1px solid var(--border-strong);
+    border-radius:var(--r-md);box-shadow:var(--shadow-lg);padding:6px;
+    -webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);
+  }
+  .split-menu[hidden]{display:none;}
+  .split-menu button{
+    display:flex;align-items:center;justify-content:space-between;gap:12px;
+    width:100%;background:transparent;color:var(--text);border:none;box-shadow:none;
+    padding:10px 12px;font-size:13px;font-weight:500;text-align:left;border-radius:8px;
+  }
+  .split-menu button:hover:not(:disabled){background:var(--hover);color:var(--accent);transform:none;filter:none;}
+  .split-menu .menu-count{color:var(--text-mut);font-family:var(--mono);font-size:11px;font-weight:500;}
   input[type=text],input[type=password],select{
     width:100%;padding:12px 14px;border:1px solid var(--border-strong);border-radius:var(--r-sm);
     background:var(--field);color:var(--text);font-size:14px;font-family:var(--sans);
@@ -296,15 +323,29 @@
         <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
         <div class="progress-log" id="progressLog">Idle.</div>
       </div>
-      <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap;">
-        <button id="collectBtn">Collect snapshot</button>
+      <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <!-- Split button: main click = collect ALL, the ▾ chevron opens a menu
+             with per-platform options. Everything else on the page is
+             preserved when you refresh only one platform — the DB has one
+             snapshot row per source per collect, so other platforms keep
+             their most-recent numbers. -->
+        <div class="split-btn">
+          <button id="collectBtn" title="Collect a fresh snapshot for every source">Collect snapshot</button>
+          <button id="collectMenuBtn" class="split-caret" aria-haspopup="true" aria-expanded="false" title="Update only one platform (keeps the others' last-known numbers)">▾</button>
+          <div class="split-menu" id="collectMenu" role="menu" hidden>
+            <button role="menuitem" data-platform="">Update all platforms <span class="menu-count" id="cmCountAll"></span></button>
+            <button role="menuitem" data-platform="youtube">Update YouTube only <span class="menu-count" id="cmCountYT"></span></button>
+            <button role="menuitem" data-platform="facebook">Update Facebook only <span class="menu-count" id="cmCountFB"></span></button>
+            <button role="menuitem" data-platform="instagram">Update Instagram only <span class="menu-count" id="cmCountIG"></span></button>
+          </div>
+        </div>
         <button id="deepCollectBtn" class="ghost" title="Fetch real lifetime views for every Meta post — takes 15–30 minutes for large accounts. Keep this tab open.">Deep collect (lifetime views)</button>
         <button id="exportBtn" class="ghost">Export to Excel…</button>
         <button id="exportCsvBtn" class="ghost">Export CSV</button>
         <button id="exportPdfBtn" class="ghost">Export PDF</button>
       </div>
       <div class="alert" id="collectAlert"></div>
-      <p class="hint"><b>Views:</b> YouTube shows real lifetime channel views. Facebook and Instagram views are blank on a normal snapshot — run <b>Deep collect</b> once per account to pull true lifetime views (sums per-post impressions across every post, one API call each). Cached in the DB, so subsequent snapshots stay fast; re-run only when you want a fresh number.</p>
+      <p class="hint"><b>Refresh one platform at a time:</b> use the <code>▾</code> next to Collect to update just YouTube, Facebook, or Instagram. The other platforms' numbers stay exactly as they were — nothing is lost, and the tiles/totals blend the newly-refreshed platform with the still-current numbers from the others. <br><b>Views:</b> YouTube shows real lifetime channel views. Facebook and Instagram views are blank on a normal snapshot — run <b>Deep collect</b> once per account to pull true lifetime views (sums per-post impressions across every post, one API call each). Cached in the DB, so subsequent snapshots stay fast.</p>
     </div>
 
     <div class="card">
@@ -956,36 +997,120 @@ async function collectOne(source, onProgress) {
 }
 
 let collecting = false;
-$('collectBtn').addEventListener('click', async () => {
+
+/* runCollect(platformFilter): collect a fresh snapshot for the selected
+   platform ('youtube' | 'facebook' | 'instagram') or every source when
+   platformFilter is null. Because snapshots live in analytics_snapshots
+   one row per source per collect (and lastSnapshot only *updates* for the
+   sources touched here), the untouched platforms keep their last-known
+   numbers — the tiles + grand total below just blend them together. */
+async function runCollect(platformFilter) {
   if (collecting) return;
+  const targets = platformFilter
+    ? sources.filter(s => s.platform === platformFilter)
+    : sources;
   if (!sources.length) { showAlert('collectAlert', 'Add at least one source first.'); return; }
+  if (!targets.length) {
+    showAlert('collectAlert', `No ${platformFilter || ''} sources to collect.`);
+    return;
+  }
+
   collecting = true;
   $('collectBtn').disabled = true;
+  $('collectMenuBtn').disabled = true;
   $('progressWrap').style.display = 'block';
   showAlert('collectAlert', '');
 
+  const scope = platformFilter
+    ? `${platformFilter} only (${targets.length} of ${sources.length} source${sources.length===1?'':'s'})`
+    : `all ${targets.length} source${targets.length===1?'':'s'}`;
+
   let done = 0;
-  for (const s of sources) {
-    setProgress(Math.round((done / sources.length) * 100),
-      `[${done + 1}/${sources.length}] ${s.brand} · ${s.platform}`);
+  let failed = 0;
+  for (const s of targets) {
+    setProgress(Math.round((done / targets.length) * 100),
+      `[${done + 1}/${targets.length}] ${s.brand} · ${s.platform}  ·  updating ${scope}`);
     setBreakdownStatus(s.id, 'Collecting…');
     try {
       const totals = await collectOne(s, (n) => setProgress(
-        Math.round((done / sources.length) * 100),
-        `[${done + 1}/${sources.length}] ${s.brand} · ${s.platform} — ${n.toLocaleString()} so far`));
+        Math.round((done / targets.length) * 100),
+        `[${done + 1}/${targets.length}] ${s.brand} · ${s.platform} — ${n.toLocaleString()} so far  ·  updating ${scope}`));
       const { data } = await sb.from('analytics_snapshots')
         .insert({ source_id: s.id, totals }).select('captured_at').single();
       lastSnapshot[s.id] = { source_id: s.id, totals, captured_at: data?.captured_at || new Date().toISOString() };
       setBreakdownStatus(s.id, 'ok', totals._note || '');
     } catch (e) {
+      failed++;
       setBreakdownStatus(s.id, 'err', e.message || String(e));
     }
     done++;
     renderBreakdown();
   }
-  setProgress(100, 'Done.');
+
+  const untouched = sources.length - targets.length;
+  const msg = platformFilter
+    ? `${platformFilter} updated (${done - failed}/${targets.length}). ${untouched} source${untouched===1?'':'s'} on other platforms kept their last-known numbers.`
+    : `All ${targets.length} sources collected.`;
+  setProgress(100, msg);
+  if (failed) showAlert('collectAlert', `${failed} of ${targets.length} source${targets.length===1?'':'s'} failed to collect — hover the red "error" pill for the reason.`);
+
   $('collectBtn').disabled = false;
+  $('collectMenuBtn').disabled = false;
   collecting = false;
+}
+
+$('collectBtn').addEventListener('click', () => runCollect(null));
+
+/* --- split-button menu: pick one platform to refresh --- */
+
+function refreshCollectMenuCounts() {
+  const by = { youtube: 0, facebook: 0, instagram: 0 };
+  sources.forEach(s => { if (by[s.platform] != null) by[s.platform]++; });
+  $('cmCountAll').textContent = sources.length ? `${sources.length}` : '';
+  $('cmCountYT').textContent  = by.youtube    ? `${by.youtube}`     : '(none)';
+  $('cmCountFB').textContent  = by.facebook   ? `${by.facebook}`    : '(none)';
+  $('cmCountIG').textContent  = by.instagram  ? `${by.instagram}`   : '(none)';
+  // Disable menu items with zero sources so they can't be clicked.
+  document.querySelectorAll('#collectMenu button').forEach(btn => {
+    const p = btn.dataset.platform;
+    const n = p === '' ? sources.length : (by[p] || 0);
+    btn.disabled = n === 0;
+  });
+}
+
+function toggleCollectMenu(open) {
+  const menu = $('collectMenu');
+  const btn  = $('collectMenuBtn');
+  const shouldOpen = open == null ? menu.hasAttribute('hidden') : open;
+  if (shouldOpen) {
+    refreshCollectMenuCounts();
+    menu.removeAttribute('hidden');
+    btn.setAttribute('aria-expanded', 'true');
+  } else {
+    menu.setAttribute('hidden', '');
+    btn.setAttribute('aria-expanded', 'false');
+  }
+}
+
+$('collectMenuBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  toggleCollectMenu();
+});
+$('collectMenu').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-platform]');
+  if (!btn || btn.disabled) return;
+  toggleCollectMenu(false);
+  const p = btn.dataset.platform || null;
+  runCollect(p);
+});
+// Close the menu when clicking outside or pressing Escape.
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#collectMenu') && !e.target.closest('#collectMenuBtn')) {
+    toggleCollectMenu(false);
+  }
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') toggleCollectMenu(false);
 });
 
 function setProgress(pct, txt) {
