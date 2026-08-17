@@ -212,6 +212,16 @@ Deno.serve(async (req: Request) => {
 
   const upstream = await fetch(url.toString());
   const body = await upstream.text();
+  // Surface upstream 4xx/5xx bodies in server-side logs so we can diagnose Meta
+  // API errors (invalid field, missing permission, deprecated metric, …) after
+  // the fact via `query_logs`. Truncated to keep log lines reasonable.
+  if (!upstream.ok) {
+    console.warn(
+      `meta-proxy upstream ${upstream.status} on ${endpoint} ` +
+      `params=${JSON.stringify(payload.params ?? {})} ` +
+      `body=${body.slice(0, 500)}`,
+    );
+  }
   return new Response(body, {
     status: upstream.status,
     headers: { ...corsHeaders(origin), "Content-Type": "application/json" },

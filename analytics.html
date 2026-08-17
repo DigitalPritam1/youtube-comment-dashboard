@@ -842,10 +842,39 @@ async function collectYoutube(source) {
    already-fixed session-refresh so a big Page doesn't die mid-run. Captures the
    oldest post date seen -> honest "data since" for the timeframe row. */
 async function collectFacebook(source, onProgress) {
-  const info = await metaFetch(source.source_id, {
-    fields: 'name,fan_count,followers_count,created_time'
-  }, null, source.source_id);
+  // Meta's Graph API returns 400 for the WHOLE ?fields=... request if ANY one
+  // field is invalid — and 'fan_count' was deprecated in v18+ (we're on v21).
+  // Rather than picking one combo that might silently break in a future
+  // version bump, try a chain of progressively simpler field sets and use the
+  // first one that succeeds. That keeps followers coming through even if
+  // Meta later drops another field, and pinpoints which field is bad in the
+  // meantime (captured in _fieldsWarning).
+  const fieldTries = [
+    'name,followers_count,fan_count,created_time',
+    'name,followers_count,created_time',
+    'name,followers_count',
+    'name,fan_count',
+    'name',
+  ];
+  let info = {};
+  let firstError = null;
+  let usedFields = null;
+  for (const fields of fieldTries) {
+    try {
+      info = await metaFetch(source.source_id, { fields }, null, source.source_id);
+      usedFields = fields;
+      break;
+    } catch (e) {
+      if (!firstError) firstError = e;
+      // eslint-disable-next-line no-console
+      console.warn(`[collectFacebook] fields="${fields}" failed:`, e.message);
+    }
+  }
+  if (!usedFields) throw firstError || new Error('Could not read Page info at all.');
   const followers = info.followers_count ?? info.fan_count ?? null;
+  const fieldsWarning = usedFields === fieldTries[0]
+    ? null
+    : `Some Page fields unavailable — fell back to "${usedFields}". First error: ${firstError?.message || ''}`.trim();
   let oldestPost = null;
 
   let content = 0, likes = 0, comments = 0, shares = 0;
@@ -869,6 +898,8 @@ async function collectFacebook(source, onProgress) {
     if (!r.paging?.next || !after) break;
     if (content > 20000) break;   // safety
   }
+  const notes = ['photo-post views not counted (see note)'];
+  if (fieldsWarning) notes.unshift(fieldsWarning);
   return {
     content, followers, views: null,
     likes, comments, shares,
@@ -877,7 +908,7 @@ async function collectFacebook(source, onProgress) {
     // oldest post seen (some Pages don't expose created_time to app tokens).
     since: info.created_time || oldestPost,
     until: new Date().toISOString(),
-    _note: 'photo-post views not counted (see note)'
+    _note: notes.join(' · ')
   };
 }
 
