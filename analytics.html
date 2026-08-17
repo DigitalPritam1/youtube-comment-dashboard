@@ -340,6 +340,11 @@
           </div>
         </div>
         <button id="deepCollectBtn" class="ghost" title="Fetch real lifetime views for every Meta post — takes 15–30 minutes for large accounts. Keep this tab open.">Deep collect (lifetime views)</button>
+        <!-- Run controls: hidden until a run is active. Pause freezes the loop
+             in place; Resume unfreezes. Stop aborts cleanly — any source
+             already collected keeps its fresh snapshot. -->
+        <button id="pauseBtn" class="ghost" hidden title="Freeze the current run — nothing is lost, click Resume to continue">⏸ Pause</button>
+        <button id="stopBtn" class="danger" hidden title="Abort the run. Data collected so far is kept in the DB.">■ Stop</button>
         <button id="exportBtn" class="ghost">Export to Excel…</button>
         <button id="exportCsvBtn" class="ghost">Export CSV</button>
         <button id="exportPdfBtn" class="ghost">Export PDF</button>
@@ -998,6 +1003,68 @@ async function collectOne(source, onProgress) {
 
 let collecting = false;
 
+/* ---------- shared run controls: pause / resume / stop ----------
+   Both runCollect() and the deep-collect loop await checkRun() between
+   iterations. Pause simply blocks that promise until unpaused; Stop throws
+   a sentinel error the caller catches to exit cleanly (data already saved
+   to the DB is kept — Stop only halts the loop, never rolls back). */
+const runState = { active: null, paused: false, stopRequested: false };
+const RUN_STOPPED = Symbol('run-stopped');
+
+async function checkRun() {
+  if (runState.stopRequested) { const e = new Error('Run stopped'); e.stopped = true; throw e; }
+  while (runState.paused) {
+    // 250 ms is short enough to feel responsive when the user hits Resume,
+    // long enough that a paused loop consumes negligible CPU.
+    await sleep(250);
+    if (runState.stopRequested) { const e = new Error('Run stopped'); e.stopped = true; throw e; }
+  }
+}
+
+/* Show the Pause + Stop buttons and dim the start buttons while a run is
+   in flight. `kind` is a short label the buttons + progress log can use. */
+function showRunControls(kind) {
+  runState.active = kind;
+  runState.paused = false;
+  runState.stopRequested = false;
+  $('pauseBtn').hidden = false;
+  $('pauseBtn').textContent = '⏸ Pause';
+  $('pauseBtn').disabled = false;
+  $('stopBtn').hidden = false;
+  $('stopBtn').disabled = false;
+  $('collectBtn').disabled = true;
+  $('collectMenuBtn').disabled = true;
+  $('deepCollectBtn').disabled = true;
+  $('progressWrap').style.display = 'block';
+}
+function hideRunControls() {
+  runState.active = null;
+  runState.paused = false;
+  runState.stopRequested = false;
+  $('pauseBtn').hidden = true;
+  $('stopBtn').hidden = true;
+  $('collectBtn').disabled = false;
+  $('collectMenuBtn').disabled = false;
+  $('deepCollectBtn').disabled = false;
+}
+
+$('pauseBtn').addEventListener('click', () => {
+  if (!runState.active) return;
+  runState.paused = !runState.paused;
+  $('pauseBtn').textContent = runState.paused ? '▶ Resume' : '⏸ Pause';
+  if (runState.paused) setProgress(null, `Paused — click Resume to continue`);
+});
+
+$('stopBtn').addEventListener('click', () => {
+  if (!runState.active) return;
+  if (!confirm('Stop the current run? Data already collected is kept — clicking again just aborts what’s in flight.')) return;
+  runState.stopRequested = true;
+  runState.paused = false;   // unblock the wait loop so the throw can fire
+  $('pauseBtn').disabled = true;
+  $('stopBtn').disabled = true;
+  setProgress(null, 'Stopping…');
+});
+
 /* runCollect(platformFilter): collect a fresh snapshot for the selected
    platform ('youtube' | 'facebook' | 'instagram') or every source when
    platformFilter is null. Because snapshots live in analytics_snapshots
@@ -1016,9 +1083,7 @@ async function runCollect(platformFilter) {
   }
 
   collecting = true;
-  $('collectBtn').disabled = true;
-  $('collectMenuBtn').disabled = true;
-  $('progressWrap').style.display = 'block';
+  showRunControls('collect');
   showAlert('collectAlert', '');
 
   const scope = platformFilter
@@ -1027,7 +1092,9 @@ async function runCollect(platformFilter) {
 
   let done = 0;
   let failed = 0;
+  let stopped = false;
   for (const s of targets) {
+    try { await checkRun(); } catch (e) { if (e.stopped) { stopped = true; break; } throw e; }
     setProgress(Math.round((done / targets.length) * 100),
       `[${done + 1}/${targets.length}] ${s.brand} · ${s.platform}  ·  updating ${scope}`);
     setBreakdownStatus(s.id, 'Collecting…');
@@ -1048,14 +1115,19 @@ async function runCollect(platformFilter) {
   }
 
   const untouched = sources.length - targets.length;
-  const msg = platformFilter
-    ? `${platformFilter} updated (${done - failed}/${targets.length}). ${untouched} source${untouched===1?'':'s'} on other platforms kept their last-known numbers.`
-    : `All ${targets.length} sources collected.`;
-  setProgress(100, msg);
+  const succeeded = done - failed;
+  let msg;
+  if (stopped) {
+    msg = `Stopped at ${done}/${targets.length}. ${succeeded} source${succeeded===1?'':'s'} saved before you stopped — the rest kept their earlier data.`;
+  } else if (platformFilter) {
+    msg = `${platformFilter} updated (${succeeded}/${targets.length}). ${untouched} source${untouched===1?'':'s'} on other platforms kept their last-known numbers.`;
+  } else {
+    msg = `All ${targets.length} sources collected.`;
+  }
+  setProgress(stopped ? Math.round((done / targets.length) * 100) : 100, msg);
   if (failed) showAlert('collectAlert', `${failed} of ${targets.length} source${targets.length===1?'':'s'} failed to collect — hover the red "error" pill for the reason.`);
 
-  $('collectBtn').disabled = false;
-  $('collectMenuBtn').disabled = false;
+  hideRunControls();
   collecting = false;
 }
 
@@ -1114,7 +1186,8 @@ document.addEventListener('keydown', (e) => {
 });
 
 function setProgress(pct, txt) {
-  $('progressFill').style.width = pct + '%';
+  // pct can be null/undefined for text-only updates (pause, stopping…).
+  if (pct != null && !isNaN(pct)) $('progressFill').style.width = pct + '%';
   if (txt) $('progressLog').textContent = txt;
 }
 
@@ -1216,7 +1289,12 @@ async function deepCollectSource(source, onProgress) {
   };
 
   let rateLimitBackoff = 60_000;   // starts at 60s, doubles on each 429
+  let stopped = false;
   for (let i = 0; i < todo.length; i++) {
+    // Cooperative pause/stop check between every post. All progress up to
+    // here is already upserted to analytics_post_views in prior batches,
+    // and we flush() again after the loop so nothing pending is lost.
+    try { await checkRun(); } catch (e) { if (e.stopped) { stopped = true; break; } throw e; }
     const postId = todo[i];
     let views = null;
     let retries = 0;
@@ -1263,12 +1341,15 @@ async function deepCollectSource(source, onProgress) {
   const totalViews = (finalRows.data || []).reduce((s, r) => s + (r.views || 0), 0);
 
   const currentTotals = lastSnapshot[source.id]?.totals || {};
+  const notes = [];
+  if (stopped) notes.push(`stopped early at ${done}/${allIds.length} posts`);
+  if (failures) notes.push(`${failures} of ${allIds.length} posts returned no view data`);
   const merged = {
     ...currentTotals,
     views: totalViews,
-    _deep: true,
+    _deep: !stopped,   // only mark as a complete deep-collect if we didn't stop early
     _postsScanned: allIds.length,
-    _note: (failures ? `${failures} of ${allIds.length} posts returned no view data` : '')
+    _note: notes.join(' · ')
   };
   const { data } = await sb.from('analytics_snapshots')
     .insert({ source_id: source.id, totals: merged }).select('captured_at').single();
@@ -1276,7 +1357,7 @@ async function deepCollectSource(source, onProgress) {
     source_id: source.id, totals: merged,
     captured_at: data?.captured_at || new Date().toISOString()
   };
-  return { totalViews, postsScanned: allIds.length, failures };
+  return { totalViews, postsScanned: allIds.length, failures, stopped };
 }
 
 let deepRunning = false;
@@ -1299,15 +1380,17 @@ $('deepCollectBtn').addEventListener('click', async () => {
   if (!ok) return;
 
   deepRunning = true;
-  $('deepCollectBtn').disabled = true;
-  $('collectBtn').disabled = true;
-  $('progressWrap').style.display = 'block';
+  showRunControls('deep');
   showAlert('collectAlert', '');
   const startedAt = Date.now();
 
   let sourceIdx = 0;
+  let stoppedEarly = false;
   const results = [];
   for (const s of metaSources) {
+    // If the user hit Stop between sources, exit cleanly. All per-post cache
+    // rows for finished sources are already committed.
+    try { await checkRun(); } catch (e) { if (e.stopped) { stoppedEarly = true; break; } throw e; }
     sourceIdx++;
     const label = `[${sourceIdx}/${metaSources.length}] ${s.brand} · ${s.platform}`;
     setBreakdownStatus(s.id, 'Deep collecting…');
@@ -1320,6 +1403,7 @@ $('deepCollectBtn').addEventListener('click', async () => {
       });
       results.push({ s, ...r, ok: true });
       setBreakdownStatus(s.id, 'ok');
+      if (r.stopped) { stoppedEarly = true; break; }   // inner loop caught the stop; propagate
     } catch (e) {
       results.push({ s, ok: false, error: e.message || String(e) });
       setBreakdownStatus(s.id, 'err', e.message || String(e));
@@ -1329,16 +1413,20 @@ $('deepCollectBtn').addEventListener('click', async () => {
 
   const mins = Math.round((Date.now() - startedAt) / 60000);
   const okCount = results.filter(r => r.ok).length;
-  setProgress(100, `Deep collect done in ${mins} min — ${okCount}/${results.length} source${results.length===1?'':'s'} updated`);
+  const prefix = stoppedEarly ? `Deep collect stopped after ${mins} min` : `Deep collect done in ${mins} min`;
+  setProgress(stoppedEarly ? undefined : 100, `${prefix} — ${okCount}/${metaSources.length} source${metaSources.length===1?'':'s'} updated`);
   showAlert('collectAlert',
-    `Deep collect finished. ${okCount} source${okCount===1?'':'s'} updated with real lifetime views` +
+    (stoppedEarly ? 'Deep collect stopped. ' : 'Deep collect finished. ') +
+    `${okCount} source${okCount===1?'':'s'} updated with real lifetime views` +
     (results.some(r => !r.ok) ? ` · ${results.length - okCount} failed (hover any red row for the reason)` : '') +
-    `. Data cached — normal snapshots stay fast; re-run to refresh.`,
-    okCount === results.length);
+    `. ` +
+    (stoppedEarly
+      ? `Per-post progress is cached — clicking Deep collect again resumes where it left off.`
+      : `Data cached — normal snapshots stay fast; re-run to refresh.`),
+    !stoppedEarly && okCount === metaSources.length);
 
   deepRunning = false;
-  $('deepCollectBtn').disabled = false;
-  $('collectBtn').disabled = false;
+  hideRunControls();
 });
 
 /* ---------- table + tiles ---------- */
